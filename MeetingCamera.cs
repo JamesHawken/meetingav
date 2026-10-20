@@ -1,0 +1,777 @@
+// MeetingCamera.exe - the Meeting Camera page as a desktop app.
+//   - Opens the page in its own window (WebView2, Edge's engine built into Windows; an Edge app
+//     window if that's missing) and lives in the tray while it's open
+//   - Gets the PC ready (OBS and its virtual camera) by running Start-Meeting.ps1;
+//     progress shows in the page
+//   - Serves the page to tablets on the hall Wi-Fi (port 8080, or the next free one, remembered)
+//   - Tells the page OBS's websocket port and password, so nobody has to type them
+//   - Shows the page what JW Library's second display is showing (OBS only captures a screen
+//     while its scene is on air, so it can't be used to spot media starting)
+// Closing the Meeting Camera window quits the app.
+// Options: Midweek | Weekend   force a meeting instead of going by the day
+//          -NoSetup            don't run the setup (just serve and open the page)
+//          -NoObs              don't start OBS
+// obs-remote.html, Start-Meeting.ps1 and the lib folder (people detector, QR codes) are built
+// into the exe, so it needs no internet. A copy placed next to the exe is used instead, so the
+// page can be changed without rebuilding.
+// Build with build.bat.
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Windows.Automation;
+using System.Windows.Forms;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
+
+static class MeetingCamera
+{
+    const int FirstPort = 8080, LastPort = 8089;
+    static int Port;
+    static readonly string AppDir = AppDomain.CurrentDomain.BaseDirectory;
+    static readonly string DataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MeetingCamera");
+    // 127.0.0.1 rather than localhost, which Windows may send to IPv6 first.
+    static string Url { get { return "http://127.0.0.1:" + Port + "/"; } }
+
+    // Setup progress, read by the page through /setup.
+    static readonly object SetupLock = new object();
+    static readonly List<string> SetupLines = new List<string>();
+    static bool SetupRunning;
+    static string SetupMeeting;
+    static bool NoObs;
+
+    static NotifyIcon Tray;
+    static System.Windows.Forms.Timer QuitTimer;
+    static readonly HashSet<string> OpenWindows = new HashSet<string>();   // ids of open Meeting Camera windows
+    static Control UiThread;
+
+    [STAThread]
+    static int Main(string[] args)
+    {
+        // Real pixel sizes on every screen, even when they use different scaling.
+        try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
+        UnpackWebView2();
+        bool setup = true;
+        foreach (string arg in args)
+        {
+            string a = arg.TrimStart('-', '/').ToLowerInvariant();
+            if (a == "midweek") SetupMeeting = "Midweek";
+            else if (a == "weekend") SetupMeeting = "Weekend";
+            else if (a == "nosetup") setup = false;
+            else if (a == "noobs") NoObs = true;
+        }
+        Directory.CreateDirectory(DataDir);
+        string portFile = Path.Combine(DataDir, "port.txt");
+
+        // Already running: just show its window.
+        bool first;
+        Mutex single = new Mutex(true, @"Local\MeetingCamera", out first);
+        if (!first)
+        {
+            int.TryParse(File.Exists(portFile) ? File.ReadAllText(portFile) : "", out Port);
+            if (Port > 0) AskToShow();
+            return 0;
+        }
+
+        TcpListener listener = StartListener();
+        if (listener == null)
+        {
+            if (Port > 0) { OpenInEdge(); return 0; }   // the old Serve-Remote.ps1 is serving the page
+            MessageBox.Show("Ports " + FirstPort + "-" + LastPort + " are all in use by other programs.",
+                            "Meeting Camera", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
+        File.WriteAllText(portFile, Port.ToString());
+        new Thread(() => Serve(listener)) { IsBackground = true }.Start();
+        new Thread(WatchJwMedia) { IsBackground = true }.Start();
+
+        Application.EnableVisualStyles();
+        UiThread = new Control();
+        UiThread.CreateControl();
+        Tray = new NotifyIcon
+        {
+            Icon = new Icon(new MemoryStream(Resource("MeetingCamera.ico"))),
+            Text = "Meeting Camera",
+            Visible = true,
+            ContextMenu = new ContextMenu(new[] {
+                new MenuItem("Show Meeting Camera", (s, e) => OpenWindow()) { DefaultItem = true },
+                new MenuItem("Get ready again", (s, e) => RunSetup(null)),
+                new MenuItem("-"),
+                new MenuItem("Quit", (s, e) => Quit()),
+            }),
+        };
+        Tray.DoubleClick += (s, e) => OpenWindow();
+        // Each window says hello when it opens and goodbye when it closes. When the last one has
+        // gone, quit - unless one comes back within a few seconds (a reload).
+        QuitTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+        QuitTimer.Tick += (s, e) => { if (OpenWindows.Count == 0) Quit(); };
+
+        MakeDesktopShortcut();
+        OpenWindow();
+        if (setup) RunSetup(SetupMeeting);
+        Application.Run();
+        GC.KeepAlive(single);
+        return 0;
+    }
+
+    static void Quit()
+    {
+        Tray.Visible = false;
+        Application.Exit();
+        Environment.Exit(0);
+    }
+
+    // ---- Port -------------------------------------------------------------------
+
+    // Tries last time's port first so the tablet link stays the same. Returns null with Port set
+    // if a copy of this app is already serving the page, or with Port = 0 if nothing is free.
+    static TcpListener StartListener()
+    {
+        List<int> ports = new List<int>();
+        int saved;
+        try { if (int.TryParse(File.ReadAllText(Path.Combine(DataDir, "port.txt")), out saved)) ports.Add(saved); } catch { }
+        for (int p = FirstPort; p <= LastPort; p++) if (!ports.Contains(p)) ports.Add(p);
+
+        foreach (int p in ports)
+        {
+            // Something else may hold the port on just one loopback address (WSL does this), which
+            // would quietly win over a listener on all addresses - so check both first.
+            if (CanBind(IPAddress.Loopback, p) && CanBind(IPAddress.IPv6Loopback, p))
+            {
+                TcpListener listener = new TcpListener(IPAddress.IPv6Any, p);   // IPv6 and IPv4
+                try { listener.Server.DualMode = true; listener.Start(); Port = p; return listener; }
+                catch (SocketException) { }
+            }
+            else if (IsOurs(p)) { Port = p; return null; }
+        }
+        Port = 0;
+        return null;
+    }
+
+    static bool CanBind(IPAddress address, int port)
+    {
+        TcpListener test = new TcpListener(address, port);
+        try { test.Start(); return true; }
+        catch (SocketException) { return false; }
+        finally { test.Stop(); }
+    }
+
+    // Asks whatever has the port for /info: our server (or Serve-Remote.ps1) answers with "ips".
+    static bool IsOurs(int port)
+    {
+        try
+        {
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + port + "/info");
+            req.Timeout = req.ReadWriteTimeout = 2000;
+            req.Proxy = null;
+            using (WebResponse res = req.GetResponse())
+            using (StreamReader r = new StreamReader(res.GetResponseStream()))
+                return r.ReadToEnd().Contains("\"ips\"");
+        }
+        catch { return false; }
+    }
+
+    // ---- Window -----------------------------------------------------------------
+
+    // Edge's app mode gives the page a window of its own, without tabs or an address bar.
+    // Its own profile folder keeps the page's settings apart from normal browsing.
+    // ---- Window -----------------------------------------------------------------
+
+    static AppWindow Window;
+
+    static void OpenWindow()
+    {
+        if (Window != null && !Window.IsDisposed) { Window.Bring(); return; }
+        try { ShowAppWindow(); }
+        catch { Window = null; OpenInEdge(); }   // WebView2's files couldn't be loaded
+    }
+
+    // Separate so that WebView2 not loading is caught by OpenWindow.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    static void ShowAppWindow()
+    {
+        string userData = Path.Combine(DataDir, "WebView2");
+        MoveEdgeStorage(userData);
+        CoreWebView2Environment.SetLoaderDllFolderPath(WebView2Dir);
+        AppWindow w = new AppWindow(Url, userData, new Icon(new MemoryStream(Resource("MeetingCamera.ico"))));
+        w.Failed += () => { w.Close(); Window = null; OpenInEdge(); };   // no WebView2 on this PC
+        w.FormClosed += (s, e) => { if (!w.HasFailed) Quit(); };
+        Window = w;
+        w.Show();
+    }
+
+    // Started again while running: the running copy shows its window.
+    static void AskToShow()
+    {
+        try
+        {
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(Url + "show");
+            req.Headers.Add("X-Meeting-Camera", "1");
+            req.Timeout = 3000;
+            req.GetResponse().Close();
+        }
+        catch { OpenInEdge(); }
+    }
+
+    // WebView2's files are built into the exe and unpacked next to its data on first use.
+    const string WebView2Version = "1.0.4191.47";
+    static string WebView2Dir { get { return Path.Combine(DataDir, "webview2-" + WebView2Version); } }
+
+    static void UnpackWebView2()
+    {
+        try
+        {
+            Directory.CreateDirectory(WebView2Dir);
+            foreach (string name in new[] { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
+            {
+                string path = Path.Combine(WebView2Dir, name);
+                if (!File.Exists(path)) File.WriteAllBytes(path, Resource("webview2/" + name));
+            }
+        }
+        catch { }
+        AppDomain.CurrentDomain.AssemblyResolve += (s, e) =>
+        {
+            string file = Path.Combine(WebView2Dir, new AssemblyName(e.Name).Name + ".dll");
+            return File.Exists(file) ? Assembly.LoadFrom(file) : null;
+        };
+    }
+
+    // What the page saved (in its browser storage) while it ran in an Edge window moves over, once.
+    static void MoveEdgeStorage(string userData)
+    {
+        string from = Path.Combine(DataDir, @"Window\Default\Local Storage");
+        string to = Path.Combine(userData, @"EBWebView\Default\Local Storage");
+        if (!Directory.Exists(from) || Directory.Exists(to)) return;
+        try { CopyFolder(from, to); } catch { }
+    }
+
+    static void CopyFolder(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+        foreach (string f in Directory.GetFiles(from))
+            if (Path.GetFileName(f) != "LOCK") File.Copy(f, Path.Combine(to, Path.GetFileName(f)));
+        foreach (string d in Directory.GetDirectories(from)) CopyFolder(d, Path.Combine(to, Path.GetFileName(d)));
+    }
+
+    static void OpenInEdge()
+    {
+        string edge = FindEdge();
+        string profile = Path.Combine(DataDir, "Window");
+        try
+        {
+            if (edge == null) throw new FileNotFoundException();
+            Process.Start(edge, "--app=" + Url + " --user-data-dir=\"" + profile + "\"" +
+                                " --no-first-run --no-default-browser-check --window-size=1280,900");
+        }
+        catch { Process.Start(Url); }   // no Edge: use the default browser
+    }
+
+    static string FindEdge()
+    {
+        foreach (string root in new[] { "HKEY_CURRENT_USER", "HKEY_LOCAL_MACHINE" })
+        {
+            string path = Microsoft.Win32.Registry.GetValue(root + @"\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe", "", null) as string;
+            if (path != null && File.Exists(path)) return path;
+        }
+        foreach (string dir in new[] { Environment.GetEnvironmentVariable("ProgramFiles(x86)"), Environment.GetEnvironmentVariable("ProgramFiles") })
+        {
+            if (dir == null) continue;
+            string path = Path.Combine(dir, @"Microsoft\Edge\Application\msedge.exe");
+            if (File.Exists(path)) return path;
+        }
+        return null;
+    }
+
+    // A desktop shortcut the first time the app runs (not again if it's deleted).
+    static void MakeDesktopShortcut()
+    {
+        string flag = Path.Combine(DataDir, "shortcut-made");
+        if (File.Exists(flag)) return;
+        try
+        {
+            string lnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Meeting Camera.lnk");
+            Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+            object shell = Activator.CreateInstance(shellType);
+            object sc = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { lnk });
+            Type t = sc.GetType();
+            t.InvokeMember("TargetPath", BindingFlags.SetProperty, null, sc, new object[] { Application.ExecutablePath });
+            t.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, sc, new object[] { AppDir });
+            t.InvokeMember("Description", BindingFlags.SetProperty, null, sc, new object[] { "Get ready for the meeting and control the camera" });
+            t.InvokeMember("Save", BindingFlags.InvokeMethod, null, sc, null);
+            File.WriteAllText(flag, DateTime.Now.ToString("s"));
+        }
+        catch { }
+    }
+
+    // ---- Setup ------------------------------------------------------------------
+
+    // Runs Start-Meeting.ps1 hidden; its output lines are shown by the page.
+    static void RunSetup(string meeting)
+    {
+        lock (SetupLock)
+        {
+            if (SetupRunning) return;
+            SetupRunning = true;
+            SetupLines.Clear();
+        }
+        new Thread(() =>
+        {
+            try
+            {
+                string script = Path.Combine(AppDir, "Start-Meeting.ps1");
+                if (!File.Exists(script))
+                {
+                    script = Path.Combine(DataDir, "Start-Meeting.ps1");
+                    File.WriteAllBytes(script, Resource("Start-Meeting.ps1"));
+                }
+                string arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -AppMode";
+                if (meeting != null) arguments += " -Meeting " + meeting;
+                if (NoObs) arguments += " -NoObs";
+                ProcessStartInfo psi = new ProcessStartInfo("powershell.exe", arguments)
+                {
+                    UseShellExecute = false, CreateNoWindow = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                };
+                using (Process p = Process.Start(psi))
+                {
+                    p.OutputDataReceived += (s, e) => AddSetupLine(e.Data);
+                    p.ErrorDataReceived += (s, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) AddSetupLine("  Error [!!] " + e.Data.Trim()); };
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
+                    p.WaitForExit();
+                }
+            }
+            catch (Exception e) { AddSetupLine("  Setup [!!] could not run: " + e.Message); }
+            lock (SetupLock) SetupRunning = false;
+        }) { IsBackground = true }.Start();
+    }
+
+    static void AddSetupLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        lock (SetupLock) SetupLines.Add(line.TrimEnd());
+    }
+
+    static string SetupJson()
+    {
+        lock (SetupLock)
+            return "{\"running\":" + (SetupRunning ? "true" : "false") + ",\"lines\":[" +
+                   string.Join(",", SetupLines.ConvertAll(Json)) + "]}";
+    }
+
+
+    // ---- JW Library's second display ---------------------------------------------
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+    struct RECT { public int Left, Top, Right, Bottom; }
+
+    static readonly object JwLock = new object();
+    static IntPtr JwWindow;
+    static DateTime JwCheckedAt;
+
+    // With its second display on, JW Library has two windows called "JW Library"; the one without
+    // the menu button is the second display. Looked up again every few seconds.
+    static IntPtr FindJwSecondDisplay()
+    {
+        if (JwWindow != IntPtr.Zero && IsWindow(JwWindow) && DateTime.Now - JwCheckedAt < TimeSpan.FromSeconds(5)) return JwWindow;
+        JwWindow = IntPtr.Zero;
+        JwCheckedAt = DateTime.Now;
+        var named = AutomationElement.RootElement.FindAll(TreeScope.Children,
+            new PropertyCondition(AutomationElement.NameProperty, "JW Library"));
+        var menu = new PropertyCondition(AutomationElement.AutomationIdProperty, "HamburgerRadioButton");
+        if (named.Count < 2) return IntPtr.Zero;
+        foreach (AutomationElement w in named)
+            if (w.FindFirst(TreeScope.Descendants, menu) == null) { JwWindow = new IntPtr(w.Current.NativeWindowHandle); break; }
+        return JwWindow;
+    }
+
+    static AutomationElement JwMain;
+    static volatile string JwMedia = "none";   // what JW Library has open: none, image, video, unknown or closed
+    static DateTime JwStateAskedAt = DateTime.MinValue;
+
+    // Looking through JW Library's window takes up to a second, so it's done here in the background
+    // (only while the page is asking) and /jw/state answers straight away with the latest result.
+    static void WatchJwMedia()
+    {
+        while (true)
+        {
+            if (DateTime.Now - JwStateAskedAt < TimeSpan.FromSeconds(5)) JwMedia = JwMediaOpen();
+            Thread.Sleep(100);
+        }
+    }
+
+    // Asked of JW Library's main window, which shows what's playing whichever screen it's shown on:
+    // a video (playing or paused) has its play/pause button; a picture has the picture viewer.
+    // Asking JW Library beats guessing from the screen, which can't tell a still moment in a video
+    // (a title, a scripture) from a picture, and sees the desktop when JW Library isn't showing.
+    // While JW Library changes page its window can look empty for a moment: that's "unknown", not
+    // "none", so the camera doesn't cut away from a song that's just starting.
+    static string JwMediaOpen()
+    {
+        if (Process.GetProcessesByName("JWLibrary").Length == 0) { JwMain = null; return "closed"; }
+        lock (JwLock)
+        {
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                try
+                {
+                    if (JwMain == null)
+                    {
+                        var menu = new PropertyCondition(AutomationElement.AutomationIdProperty, "HamburgerRadioButton");
+                        foreach (AutomationElement w in AutomationElement.RootElement.FindAll(TreeScope.Children,
+                                     new PropertyCondition(AutomationElement.NameProperty, "JW Library")))
+                            if (w.FindFirst(TreeScope.Descendants, menu) != null) { JwMain = w; break; }
+                        if (JwMain == null) return "none";
+                    }
+                    // One pass through the window for all three: a song's page is big, and looking
+                    // three times made the cut to the screen noticeably late.
+                    bool video = false, image = false, page = false;
+                    foreach (AutomationElement el in JwMain.FindAll(TreeScope.Descendants, MediaMarkers))
+                    {
+                        if (el.Current.IsOffscreen) continue;
+                        string id = el.Current.AutomationId;
+                        if (id == "TogglePlaybackButton") video = true;
+                        else if (id == "ImageRenderer") image = true;
+                        else page = true;
+                    }
+                    if (video) return "video";
+                    if (image) return "image";
+                    if (page) return "none";
+                    JwMain = null;   // looked up afresh next time, in case JW Library rebuilt its window
+                    return "unknown";
+                }
+                catch { JwMain = null; }   // JW Library was closed or restarted: look it up again
+            }
+            return "none";
+        }
+    }
+
+    // A video's play/pause button, the picture viewer, and the top bar every normal page has.
+    static readonly Condition MediaMarkers = new OrCondition(
+        new PropertyCondition(AutomationElement.AutomationIdProperty, "TogglePlaybackButton"),
+        new PropertyCondition(AutomationElement.AutomationIdProperty, "ImageRenderer"),
+        new PropertyCondition(AutomationElement.AutomationIdProperty, "TopCommandBar"));
+
+    // With extra screens, JW Library fills one of them instead of opening a window: the only extra
+    // screen, or with several, the one named in this file (put a name like \\.\DISPLAY2 in it).
+    static string JwDisplayFile { get { return Path.Combine(DataDir, "jw-display.txt"); } }
+
+    static Screen JwTargetScreen()
+    {
+        string saved = null;
+        try { if (File.Exists(JwDisplayFile)) saved = File.ReadAllText(JwDisplayFile).Trim(); } catch { }
+        Screen only = null;
+        int extra = 0;
+        foreach (Screen s in Screen.AllScreens)
+        {
+            if (s.Primary) continue;
+            if (s.DeviceName == saved) return s;
+            only = s; extra++;
+        }
+        return extra == 1 ? only : null;   // several and none saved: can't tell which
+    }
+
+    // A small picture of what the second display shows: read from JW Library's window when it has
+    // one (works even when other windows cover it), otherwise from the screen JW Library fills.
+    static byte[] JwScreen(int width, int height)
+    {
+        width = Math.Max(8, Math.Min(width, 1280)); height = Math.Max(8, Math.Min(height, 720));
+        // Without JW Library the screen shows the desktop, which would look like a picture.
+        if (Process.GetProcessesByName("JWLibrary").Length == 0) return null;
+        lock (JwLock)
+        {
+            try
+            {
+                IntPtr hwnd = FindJwSecondDisplay();
+                RECT r;
+                Rectangle area;
+                if (hwnd != IntPtr.Zero && GetWindowRect(hwnd, out r) && r.Right > r.Left && r.Bottom > r.Top)
+                    area = new Rectangle(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+                else
+                {
+                    hwnd = IntPtr.Zero;
+                    Screen screen = JwTargetScreen();
+                    if (screen == null) return null;
+                    area = screen.Bounds;
+                }
+                using (Bitmap full = new Bitmap(area.Width, area.Height))
+                using (Bitmap small = new Bitmap(width, height))
+                using (MemoryStream png = new MemoryStream())
+                {
+                    using (Graphics g = Graphics.FromImage(full))
+                    {
+                        if (hwnd == IntPtr.Zero) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
+                        else
+                        {
+                            IntPtr dc = g.GetHdc();
+                            bool ok = PrintWindow(hwnd, dc, 2);   // PW_RENDERFULLCONTENT: includes video and web content
+                            g.ReleaseHdc(dc);
+                            if (!ok) return null;
+                        }
+                    }
+                    using (Graphics g = Graphics.FromImage(small))
+                    {
+                        g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                        g.DrawImage(full, 0, 0, width, height);
+                    }
+                    small.Save(png, ImageFormat.Png);
+                    return png.ToArray();
+                }
+            }
+            catch { JwWindow = IntPtr.Zero; return null; }
+        }
+    }
+
+    // ---- OBS websocket settings -------------------------------------------------
+
+    // OBS keeps its websocket port and password in plugin_config\obs-websocket\config.json.
+    static string ObsJson()
+    {
+        string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                                   @"obs-studio\plugin_config\obs-websocket\config.json");
+        string text;
+        try { text = File.ReadAllText(path); } catch { return "{\"found\":false}"; }
+        Match enabled = Regex.Match(text, "\"server_enabled\"\\s*:\\s*(true|false)");
+        Match auth = Regex.Match(text, "\"auth_required\"\\s*:\\s*(true|false)");
+        Match port = Regex.Match(text, "\"server_port\"\\s*:\\s*(\\d+)");
+        Match pw = Regex.Match(text, "\"server_password\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+        bool needsPw = !auth.Success || auth.Groups[1].Value == "true";
+        return "{\"found\":true,\"enabled\":" + (enabled.Success ? enabled.Groups[1].Value : "true") +
+               ",\"port\":" + (port.Success ? port.Groups[1].Value : "4455") +
+               ",\"password\":\"" + (needsPw && pw.Success ? pw.Groups[1].Value : "") + "\"}";   // already JSON-escaped
+    }
+
+    // ---- Web server -------------------------------------------------------------
+
+    static List<string> LanIPs()
+    {
+        // Addresses a tablet can reach: adapters that are up and have a router (skips WSL/VPN-only adapters).
+        List<string> ips = new List<string>();
+        foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != OperationalStatus.Up) continue;
+            IPInterfaceProperties props = ni.GetIPProperties();
+            bool hasGateway = false;
+            foreach (GatewayIPAddressInformation g in props.GatewayAddresses)
+                if (g.Address.AddressFamily == AddressFamily.InterNetwork && !g.Address.Equals(IPAddress.Any)) hasGateway = true;
+            if (!hasGateway) continue;
+            foreach (UnicastIPAddressInformation u in props.UnicastAddresses)
+                if (u.Address.AddressFamily == AddressFamily.InterNetwork) ips.Add(u.Address.ToString());
+        }
+        return ips;
+    }
+
+    static byte[] Resource(string name)
+    {
+        using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+        using (MemoryStream m = new MemoryStream())
+        {
+            if (s == null) return null;
+            s.CopyTo(m);
+            return m.ToArray();
+        }
+    }
+
+    // A file from the lib folder, e.g. "lib/model/model.json"; null if there's no such file.
+    static byte[] LibFile(string path)
+    {
+        if (!Regex.IsMatch(path, @"^lib(/[\w.-]+)+$") || path.Contains("..")) return null;
+        string local = Path.Combine(AppDir, path.Replace('/', '\\'));
+        return File.Exists(local) ? File.ReadAllBytes(local) : Resource(path);
+    }
+
+    static readonly Dictionary<string, string> Types = new Dictionary<string, string> {
+        { ".js", "text/javascript" }, { ".json", "application/json" }, { ".wasm", "application/wasm" },
+        { ".png", "image/png" }, { ".webmanifest", "application/manifest+json" },
+    };
+
+    static byte[] Page()
+    {
+        string local = Path.Combine(AppDir, "obs-remote.html");
+        return File.Exists(local) ? File.ReadAllBytes(local) : Resource("obs-remote.html");
+    }
+
+    static string Json(string s)
+    {
+        StringBuilder b = new StringBuilder("\"");
+        foreach (char c in s)
+        {
+            if (c == '"' || c == '\\') b.Append('\\').Append(c);
+            else if (c < ' ') b.AppendFormat("\\u{0:x4}", (int)c);
+            else b.Append(c);
+        }
+        return b.Append('"').ToString();
+    }
+
+    static void Serve(TcpListener listener)
+    {
+        while (true)
+        {
+            TcpClient client = listener.AcceptTcpClient();
+            ThreadPool.QueueUserWorkItem(_ => Handle(client));
+        }
+    }
+
+    static void Handle(TcpClient client)
+    {
+        try
+        {
+            NetworkStream stream = client.GetStream();
+            stream.ReadTimeout = 3000;
+            StreamReader reader = new StreamReader(stream, Encoding.ASCII, false, 4096);
+            string request = reader.ReadLine() ?? "";
+            Dictionary<string, string> headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (string line; !string.IsNullOrEmpty(line = reader.ReadLine()); )
+            {
+                int colon = line.IndexOf(':');
+                if (colon > 0) headers[line.Substring(0, colon).Trim()] = line.Substring(colon + 1).Trim();
+            }
+            string[] parts = request.Split(' ');
+            string[] target = (parts.Length > 1 ? parts[1] : "").Split('?');
+            string path = target[0], query = target.Length > 1 ? target[1] : "";
+            byte[] body;
+            // Only the Meeting Camera window on this PC may read the OBS password or control the app:
+            // the request must come from this PC, be addressed to localhost (so another website can't
+            // borrow the address) and carry a header that other websites can't add without asking first.
+            string host, marker;
+            IPAddress from = ((IPEndPoint)client.Client.RemoteEndPoint).Address;
+            if (from.IsIPv4MappedToIPv6) from = from.MapToIPv4();
+            bool local = IPAddress.IsLoopback(from) && headers.TryGetValue("Host", out host) &&
+                         (host == "127.0.0.1:" + Port || host == "localhost:" + Port || host == "[::1]:" + Port) &&
+                         headers.TryGetValue("X-Meeting-Camera", out marker);
+
+            if (path == "/" || path == "/index.html")
+                Send(stream, "200 OK", "text/html; charset=utf-8", Page());
+            else if (path.StartsWith("/lib/") && (body = LibFile(path.Substring(1))) != null)
+            {
+                string type;
+                if (!Types.TryGetValue(Path.GetExtension(path), out type)) type = "application/octet-stream";
+                Send(stream, "200 OK", type, body);
+            }
+            else if (path == "/info")
+                SendJson(stream, "{\"ips\":[" + string.Join(",", LanIPs().ConvertAll(Json)) + "],\"port\":" + Port + ",\"app\":true}", true);
+            else if (path == "/obs" && local)
+                SendJson(stream, ObsJson());
+            else if (path == "/setup" && local)
+                SendJson(stream, SetupJson());
+            else if (path == "/jw/screen" && local)
+            {
+                Match w = Regex.Match(query, "w=(\\d+)"), h = Regex.Match(query, "h=(\\d+)");
+                byte[] png = JwScreen(w.Success ? int.Parse(w.Groups[1].Value) : 64, h.Success ? int.Parse(h.Groups[1].Value) : 36);
+                if (png != null) Send(stream, "200 OK", "image/png", png);
+                else Send(stream, "404 Not Found", "text/plain", Encoding.ASCII.GetBytes("JW Library's second display isn't open"));
+            }
+            else if (path == "/jw/state" && local)
+            {
+                JwStateAskedAt = DateTime.Now;
+                SendJson(stream, "{\"media\":" + Json(JwMedia) + "}");
+            }
+            else if (path == "/jw/info" && local)
+            {
+                Screen sc = JwTargetScreen();
+                SendJson(stream, "{\"window\":" + (FindJwSecondDisplay() != IntPtr.Zero ? "true" : "false") + ",\"screen\":" +
+                    (sc == null ? "null" : "{\"name\":" + Json(sc.DeviceName) + ",\"x\":" + sc.Bounds.X + ",\"y\":" + sc.Bounds.Y +
+                                           ",\"w\":" + sc.Bounds.Width + ",\"h\":" + sc.Bounds.Height + "}") + "}");
+            }
+            else if (path == "/setup/run" && local)
+            {
+                Match m = Regex.Match(query, "meeting=(Midweek|Weekend)");
+                RunSetup(m.Success ? m.Groups[1].Value : null);
+                SendJson(stream, SetupJson());
+            }
+            else if (path == "/show" && local)
+            {
+                UiThread.BeginInvoke((Action)OpenWindow);
+                SendJson(stream, "{}");
+            }
+            else if ((path == "/hello" || path == "/bye") && local)
+            {
+                bool bye = path == "/bye";
+                string id = Regex.Match(query, "id=(\\w+)").Groups[1].Value;
+                UiThread.BeginInvoke((Action)(() =>
+                {
+                    if (bye) OpenWindows.Remove(id); else OpenWindows.Add(id);
+                    QuitTimer.Stop();
+                    if (OpenWindows.Count == 0) QuitTimer.Start();
+                }));
+                SendJson(stream, "{}");
+            }
+            else
+                Send(stream, "404 Not Found", "text/plain", Encoding.ASCII.GetBytes("Not found"));
+        }
+        catch { }
+        finally { client.Close(); }
+    }
+
+    // Only /info may be read by other pages (the old page, opened as a file, asks it for the tablet address).
+    static void SendJson(Stream stream, string json, bool shared = false)
+    {
+        Send(stream, "200 OK", "application/json", Encoding.UTF8.GetBytes(json), shared);
+    }
+
+    static void Send(Stream stream, string status, string type, byte[] body, bool shared = false)
+    {
+        string head = "HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " + body.Length +
+                      "\r\nCache-Control: no-store\r\n" + (shared ? "Access-Control-Allow-Origin: *\r\n" : "") +
+                      "Connection: close\r\n\r\n";
+        byte[] bytes = Encoding.ASCII.GetBytes(head);
+        stream.Write(bytes, 0, bytes.Length);
+        stream.Write(body, 0, body.Length);
+    }
+}
+
+// Meeting Camera's own window: the page in a WebView2 (Edge's engine, part of Windows), so it has
+// its own taskbar button and icon. Links that open a new window go to the normal browser.
+class AppWindow : Form
+{
+    readonly WebView2 view = new WebView2 { Dock = DockStyle.Fill };
+    public event Action Failed;
+    public bool HasFailed;
+
+    public AppWindow(string url, string userData, Icon icon)
+    {
+        Text = "Meeting Camera";
+        Icon = icon;
+        Rectangle area = Screen.PrimaryScreen.WorkingArea;
+        StartPosition = FormStartPosition.Manual;
+        Bounds = new Rectangle(area.X + area.Width / 10, area.Y + area.Height / 10, area.Width * 4 / 5, area.Height * 4 / 5);
+        Controls.Add(view);
+        Load += async (s, e) =>
+        {
+            try
+            {
+                CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, userData);
+                await view.EnsureCoreWebView2Async(env);
+                view.CoreWebView2.Settings.IsStatusBarEnabled = false;
+                view.CoreWebView2.NewWindowRequested += (o, a) => { a.Handled = true; try { Process.Start(a.Uri); } catch { } };
+                view.CoreWebView2.ProcessFailed += (o, a) => { try { view.CoreWebView2.Reload(); } catch { } };
+                view.Source = new Uri(url);
+            }
+            catch
+            {
+                HasFailed = true;
+                if (Failed != null) Failed();
+            }
+        };
+    }
+
+    public void Bring()
+    {
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Activate();
+    }
+}

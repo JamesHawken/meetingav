@@ -1,0 +1,2077 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Meeting Camera</title>
+<!-- "Add to Home Screen" on a tablet makes it an app: full screen, with its own icon. -->
+<link rel="manifest" href="lib/manifest.webmanifest">
+<link rel="icon" href="lib/icon-192.png">
+<link rel="apple-touch-icon" href="lib/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Camera">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111317">
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #fff; --text: #1b1d22; --muted: #6b7280; --line: #e2e4e9;
+    --accent: #2563eb; --accent-soft: #dbe6fd; --live: #dc2626; --ok: #16a34a; --warn: #b45309;
+    --btn: #eef0f4; --btn-hover: #e2e6ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111317; --panel: #1a1d23; --text: #eceef2; --muted: #9097a3; --line: #2a2e36;
+            --accent-soft: #1e2a44; --warn: #f59e0b; --btn: #242830; --btn-hover: #2e333d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 16px 16px 32px;
+         /* As a home-screen app the page runs under the status bar and round corners. */
+         padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+                  max(32px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  header { display: flex; align-items: center; gap: 12px 20px; margin-bottom: 14px; flex-wrap: wrap; }
+  .headBtns { display: flex; gap: 8px; margin-left: auto; }
+  .headBtns button { display: flex; align-items: center; gap: 8px; padding: 9px 12px; }
+  @media (max-width: 600px) { .headBtns .lbl { display: none; } }
+  h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 10px; }
+  h1 svg { color: var(--accent); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0;
+       display: flex; align-items: center; gap: 8px; }
+  .panelHead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+  svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+          stroke-linecap: round; stroke-linejoin: round; }
+  h2 svg.i { width: 16px; height: 16px; }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); }
+  /* Everything needed during the meeting fits on one screen: picture + shots, then status cards. */
+  .top { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+  @media (max-width: 900px) { .top, .cards { grid-template-columns: 1fr; } }
+  .cards .panel { display: flex; flex-direction: column; }
+  .cards .link { margin-top: auto; padding-top: 10px; align-self: flex-start; }
+  .panelHead .hint { font-size: 12px; color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .preview { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
+  .preview img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .preview .badge { position: absolute; top: 10px; left: 10px; padding: 4px 10px; border-radius: 999px;
+                    font-size: 12px; font-weight: 700; letter-spacing: .05em; background: rgba(0,0,0,.6); color: #fff; }
+  .preview .badge.live { background: var(--live); }
+  .preview .onAir { position: absolute; bottom: 10px; left: 10px; padding: 5px 10px; border-radius: 8px;
+                    font-size: 14px; font-weight: 600; background: rgba(0,0,0,.65); color: #fff;
+                    display: flex; align-items: center; gap: 6px; }
+  .preview .onAir:empty { display: none; }
+  .preview .onAir svg.i { width: 16px; height: 16px; }
+  button { font: inherit; color: inherit; border: 0; cursor: pointer; border-radius: 10px;
+           background: var(--btn); padding: 12px 14px; transition: background .12s; }
+  button:hover { background: var(--btn-hover); }
+  button:disabled { opacity: .5; cursor: default; }
+  .camBtn { width: 100%; margin-top: 12px; padding: 18px; font-size: 18px; font-weight: 700;
+            background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .camBtn svg.i { width: 24px; height: 24px; }
+  .camBtn:hover { background: var(--accent); filter: brightness(1.1); }
+  .camBtn.live { background: var(--live); }
+
+  .rowLabel { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin: 4px 2px 6px; }
+  .rowLabel + .stage { margin-bottom: 14px; }
+  .stage { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .shot { padding: 0; overflow: hidden; text-align: left; display: flex; flex-direction: column; border: 3px solid transparent; }
+  .shot .thumb { aspect-ratio: 16/9; background: #000; width: 100%; }
+  .shot .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .shot .thumb img:not([src]) { visibility: hidden; }
+  .shot .meta { padding: 8px 9px; display: flex; align-items: center; gap: 8px; }
+  .shot .ico { width: 28px; height: 28px; border-radius: 8px; background: var(--accent-soft); color: var(--accent);
+               display: grid; place-items: center; flex: none; }
+  .shot .ico svg.i { width: 16px; height: 16px; }
+  .shot .text { flex: 1; min-width: 0; }
+  .shot .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shot .hint { font-size: 12px; color: var(--muted); }
+  .shot .key { font: 12px ui-monospace, monospace; color: var(--muted); flex: none; align-self: flex-start; }
+  .shot.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .shot.active .ico { background: rgba(255,255,255,.2); color: #fff; }
+  .shot.active .hint, .shot.active .key { color: rgba(255,255,255,.8); }
+  .shot.missing { background: transparent; border: 2px dashed var(--line); cursor: default; opacity: .7; }
+  .shot.missing .thumb { background: transparent; }
+  /* The thumbnail says what the shot is; the icon only helps on empty slots. */
+  .shot .hint, .shot:not(.missing) .ico { display: none; }
+  .shot.missing .hint { display: block; }
+
+  /* Grid view: only the shots, as big as the screen allows. Swipe right for the shot on air, full screen.
+     It covers the whole screen; warnings and messages stay on top of it. */
+  body.gridMode main > header, body.gridMode #setupCard, body.gridMode .top, body.gridMode .cards { display: none; }
+  body.gridMode { overflow: hidden; }
+  #gridView { position: fixed; inset: 0; z-index: 5; background: var(--bg); }
+  body.gridMode .alerts, body.gridMode .banner { position: fixed; z-index: 20; margin: 0;
+    top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); }
+  .pager { display: flex; width: 100%; height: 100%; overflow-x: auto; overflow-y: hidden;
+           scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior: contain; }
+  .pager::-webkit-scrollbar { display: none; }
+  .page { flex: 0 0 100%; height: 100%; scroll-snap-align: start; scroll-snap-stop: always; }
+  .gridPage { overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+              padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+                       max(40px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  .fullPage { position: relative; background: #000; }
+  .fullPage img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .fullPage img:not([src]) { visibility: hidden; }
+  .fullPage .label { position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom));
+                     display: flex; align-items: center; gap: 8px; }
+  .fullPage .label span { padding: 5px 12px; border-radius: 999px; font-size: 14px; font-weight: 700;
+                          background: rgba(0,0,0,.65); color: #fff; }
+  .fullPage .label .live { background: var(--live); }
+  .pageDots { position: fixed; z-index: 6; left: 50%; transform: translateX(-50%); bottom: max(8px, env(safe-area-inset-bottom));
+              display: flex; gap: 4px; }
+  .pageDots button { width: 26px; height: 26px; padding: 0; background: none; display: grid; place-items: center; }
+  .pageDots button::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: .5; }
+  .pageDots button[aria-current="true"]::after { opacity: 1; background: var(--accent); }
+  .gridBar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .gridBar .badge { padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; letter-spacing: .05em;
+                    background: var(--btn); color: var(--muted); white-space: nowrap; }
+  .gridBar .badge.live { background: var(--live); color: #fff; }
+  .gOnAir { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gridBar button { display: flex; align-items: center; gap: 8px; padding: 10px 14px; flex: none; }
+  .gridBar .gCam, .gridBar .gCam:hover { background: var(--accent); color: #fff; font-weight: 700; }
+  .gridBar .gCam.live { background: var(--live); }
+  @media (max-width: 600px) { .gridBar .lbl { display: none; } }
+  .gridTiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+  .tile { position: relative; padding: 0; aspect-ratio: 16/9; overflow: hidden; background: #000;
+          border: 4px solid transparent; border-radius: 14px; }
+  .tile:hover { background: #000; }
+  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tile img:not([src]) { visibility: hidden; }
+  .tile .name { position: absolute; left: 8px; bottom: 8px; padding: 4px 10px; border-radius: 8px;
+                background: rgba(0,0,0,.65); color: #fff; font-weight: 600; }
+  .tile.active { border-color: var(--accent); }
+  .tile.active .name { background: var(--accent); }
+  .tile.active.live { border-color: var(--live); }
+  .tile.active.live .name { background: var(--live); }
+
+  .items { display: flex; flex-direction: column; gap: 8px; }
+  .item { display: flex; justify-content: space-between; align-items: center; text-align: left; gap: 10px; }
+  .switch { width: 38px; height: 22px; border-radius: 999px; background: var(--line); position: relative; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+                   border-radius: 50%; background: #fff; transition: left .12s; }
+  .on > .switch { background: var(--ok); }
+  .on > .switch::after { left: 19px; }
+  .toggle { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; font-size: 14px; font-weight: 600; }
+
+  .detect { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 10px; background: var(--btn); }
+  .detect .ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none;
+                 background: var(--panel); color: var(--muted); }
+  .detect .ico svg.i { width: 24px; height: 24px; }
+  .detect.image .ico, .detect.video .ico, .detect.active .ico { background: var(--accent); color: #fff; }
+  .track { aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
+  .track canvas { width: 100%; height: 100%; display: block; }
+  .setup input[type=range] { padding: 0; accent-color: var(--accent); }
+  .detect .text { flex: 1; min-width: 0; }
+  .detect .name { font-weight: 700; }
+  .detect .hint { font-size: 13px; color: var(--muted); }
+  .detect img { width: 160px; aspect-ratio: 16/9; border-radius: 6px; background: #000; object-fit: cover; flex: none; }
+  .detect img:not([src]) { visibility: hidden; }
+  .rules { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center;
+           font-size: 13px; color: var(--muted); margin: 12px 2px 4px; }
+  .rules svg.i { width: 16px; height: 16px; }
+  .rules b { color: var(--text); font-weight: 600; }
+  .warn { color: var(--warn); font-size: 13px; margin-top: 8px; }
+  .warn:empty { display: none; }
+  .setup { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+  .setup label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .setup .row { display: flex; gap: 10px; align-items: center; }
+  .setup .row button { display: flex; align-items: center; gap: 8px; flex: none; }
+
+  .empty { color: var(--muted); font-size: 14px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  .settings { display: grid; grid-template-columns: 1fr 100px 1fr auto; gap: 8px; align-items: end; }
+  .settings label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  @media (max-width: 600px) { .settings { grid-template-columns: 1fr 1fr; } }
+  input, select { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
+                  border-radius: 8px; padding: 9px 10px; width: 100%; }
+  .banner { margin-bottom: 14px; padding: 12px 14px; border-radius: 12px; font-weight: 600;
+            background: var(--panel); border: 2px solid var(--warn); color: var(--warn); }
+  button.link { background: none; padding: 0; color: var(--accent); font-size: 14px; font-weight: 600; }
+  button.link:hover { background: none; text-decoration: underline; }
+  #holdBtn.active, #practice button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+
+  .setupCard { margin-bottom: 16px; }
+  .setupCard .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .spin { width: 20px; height: 20px; flex: none; border-radius: 50%; border: 3px solid var(--line);
+          border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  dialog { border: 0; border-radius: 16px; padding: 0; width: min(780px, calc(100vw - 32px));
+           max-height: calc(100vh - 48px); background: var(--panel); color: var(--text);
+           box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  dialog[open] { display: flex; flex-direction: column; }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  .dlgHead { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 16px 10px; }
+  .dlgBody { padding: 4px 16px 18px; overflow-y: auto; }
+  .tabs { display: flex; gap: 4px; padding: 0 16px; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
+  .tabs button { background: none; border-radius: 0; padding: 10px 12px; color: var(--muted); font-weight: 600;
+                 border-bottom: 3px solid transparent; white-space: nowrap; }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  [data-pane] { padding-top: 14px; }
+  .help { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  kbd { font: 12px ui-monospace, monospace; background: var(--btn); padding: 1px 6px; border-radius: 4px; }
+  [hidden] { display: none !important; }
+
+  .alerts { position: sticky; top: 8px; z-index: 10; display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .alert { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px;
+           background: var(--live); color: #fff; font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+  .alert .text { flex: 1; }
+  .alert button { background: rgba(255,255,255,.2); color: #fff; padding: 8px 12px; display: flex; }
+  .alert button:hover { background: rgba(255,255,255,.3); }
+  .alert.quiet { background: var(--panel); color: var(--live); border: 2px solid var(--live); box-shadow: none; }
+  .alert.quiet button { background: var(--btn); color: var(--text); }
+  .meeting .big { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .meeting .hint { font-size: 13px; color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .actions button { display: flex; align-items: center; gap: 8px; }
+  .checks { display: flex; flex-direction: column; gap: 6px; }
+  .check { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: var(--btn); }
+  .check .text { flex: 1; min-width: 0; }
+  .check .sub { font-size: 13px; color: var(--muted); }
+  .check.ok > svg { color: var(--ok); }
+  .check.warn > svg { color: var(--warn); }
+  .check.bad > svg { color: var(--live); }
+  .check button { padding: 6px 10px; font-size: 14px; background: var(--panel); flex: none; }
+  .times { display: grid; grid-template-columns: auto 1fr 1fr; gap: 8px; align-items: center; font-size: 14px; }
+  .remote { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+  .remote ol { margin: 6px 0 0; padding-left: 20px; }
+  .remote .qr { background: #fff; padding: 8px; border-radius: 8px; line-height: 0; }
+  .remote a { color: var(--accent); font-weight: 600; word-break: break-all; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><i data-icon="video"></i>Meeting Camera</h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">Not connected</span></div>
+    <div class="headBtns">
+      <button id="gridBtn" title="Just the shots, big"><i data-icon="grid"></i><span class="lbl">Grid</span></button>
+      <button id="tabletBtn" data-open="tablet" title="Connect a tablet or phone"><i data-icon="tablet"></i><span class="lbl">Tablet</span></button>
+      <button id="checkBtn" title="Check everything is ready"><i data-icon="list"></i><span class="lbl">Check</span></button>
+      <button data-open="connection" title="Settings"><i data-icon="sliders"></i><span class="lbl">Settings</span></button>
+    </div>
+  </header>
+  <div class="alerts" id="alerts" hidden></div>
+  <div class="banner" id="msg" hidden></div>
+
+  <section id="gridView" hidden>
+    <div class="pager" id="pager">
+      <div class="page fullPage">
+        <img id="fullImg" alt="">
+        <div class="label"><span id="fBadge">OFF AIR</span><span id="fName"></span></div>
+      </div>
+      <div class="page gridPage">
+        <div class="gridBar">
+          <span class="dot" id="gDot"></span>
+          <span class="badge" id="gBadge">OFF AIR</span>
+          <span class="gOnAir" id="gOnAir"></span>
+          <button class="gCam" id="gCam" disabled></button>
+          <button id="gExit" title="Show everything"><i data-icon="sliders"></i><span class="lbl">Full view</span></button>
+        </div>
+        <div class="gridTiles" id="gridTiles"></div>
+      </div>
+    </div>
+    <div class="pageDots"><button data-page="0" title="Shot on air, full screen"></button><button data-page="1" title="All shots"></button></div>
+  </section>
+
+  <section class="panel setupCard" id="setupCard" hidden>
+    <div class="panelHead">
+      <h2 id="setupTitle"><i data-icon="wand"></i>Getting ready</h2>
+      <div class="actions" style="margin:0">
+        <button id="setupAgain">Run again</button>
+        <button id="setupClose" title="Hide"><i data-icon="x"></i></button>
+      </div>
+    </div>
+    <div class="checks" id="setupSteps"></div>
+  </section>
+
+  <div class="top">
+    <section class="panel">
+      <div class="preview">
+        <img id="preview" alt="">
+        <span class="badge" id="badge">OFF AIR</span>
+        <span class="onAir" id="onAir"></span>
+      </div>
+      <button class="camBtn" id="camBtn" disabled></button>
+    </section>
+    <section class="panel">
+      <div class="panelHead"><h2><i data-icon="film"></i>Shots</h2><span class="hint" id="shotsHint"></span></div>
+      <div id="shots"><div class="empty">Waiting for OBS…</div></div>
+    </section>
+  </div>
+
+  <div class="cards">
+    <section class="panel">
+      <div class="panelHead">
+        <h2><i data-icon="clock"></i><span id="nextKind">Next meeting</span></h2>
+        <button class="toggle" id="autoStartBtn" role="switch"
+                title="At the start time, turn the camera on and cut from the holding screen to Platform wide">Auto-start<span class="switch"></span></button>
+      </div>
+      <div class="meeting">
+        <div class="big" id="countdown">—</div>
+        <div class="hint" id="nextWhen"></div>
+      </div>
+      <div class="actions" style="align-items:center">
+        <button id="holdBtn"><i data-icon="clock"></i>Holding screen</button>
+        <button class="link" data-open="times" style="margin-left:auto">Change times</button>
+      </div>
+    </section>
+
+    <section class="panel" id="jwPanel">
+      <div class="panelHead">
+        <h2><i data-icon="wand"></i>JW Library media</h2>
+        <button class="toggle" id="autoBtn" role="switch" title="Cut to the screen when an image or video plays">Off<span class="switch"></span></button>
+      </div>
+      <div class="detect" id="detect">
+        <span class="ico" id="detIco"></span>
+        <div class="text"><div class="name" id="detName">—</div><div class="hint" id="detHint"></div></div>
+      </div>
+      <div class="warn" id="detWarn"></div>
+      <button class="link" data-open="jw">Adjust…</button>
+    </section>
+
+    <section class="panel" id="trackPanel">
+      <div class="panelHead">
+        <h2><i data-icon="scan"></i>Follow people</h2>
+        <button class="toggle" id="trackBtn" role="switch" title="Switch shots by where people are on the platform">Off<span class="switch"></span></button>
+      </div>
+      <div class="detect" id="trackState">
+        <span class="ico" id="trackIco"></span>
+        <div class="text"><div class="name" id="trackName">—</div><div class="hint" id="trackHint"></div></div>
+      </div>
+      <button class="link" data-open="track">Adjust…</button>
+    </section>
+
+    <section class="panel" id="remoteNote" hidden>
+      <div class="panelHead"><h2><i data-icon="tablet"></i>Tablet remote</h2></div>
+      <div class="empty">JW Library media and people following are handled by the meeting PC.</div>
+    </section>
+  </div>
+</main>
+
+<dialog id="settingsDlg">
+  <div class="dlgHead">
+    <h2><i data-icon="sliders"></i>Settings</h2>
+    <button class="dlgClose" title="Close"><i data-icon="x"></i></button>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="connection">OBS connection</button>
+    <button data-tab="times">Meeting times</button>
+    <button data-tab="jw" class="mainOnly">JW Library</button>
+    <button data-tab="track" class="mainOnly">Follow people</button>
+    <button data-tab="layers">Layers</button>
+    <button data-tab="tablet" class="mainOnly">Tablet</button>
+  </nav>
+  <div class="dlgBody">
+    <div data-pane="connection">
+      <p class="help" id="connAuto" hidden style="margin-top:0">Filled in from OBS’s own settings — nothing to type.</p>
+      <form class="settings" id="settingsForm">
+        <label>Computer<input id="host" placeholder="localhost" value="localhost"></label>
+        <label>Port<input id="port" placeholder="4455" value="4455" inputmode="numeric"></label>
+        <label>Password<input id="password" type="password"></label>
+        <button type="submit">Connect</button>
+      </form>
+      <div class="help">
+        In OBS: <b>Tools → WebSocket Server Settings</b> → tick <i>Enable WebSocket server</i>,
+        then click <i>Show Connect Info</i> to see the port and password.
+        <br>Shortcuts: <kbd>V</kbd> start/stop camera · <kbd>A</kbd> JW Library media on/off · number keys switch shots.
+      </div>
+    </div>
+
+    <div data-pane="times">
+      <div class="times">
+        <span>Midweek</span><select id="midDay"></select><input id="midTime" type="time">
+        <span>Weekend</span><select id="weDay"></select><input id="weTime" type="time">
+        <span>Countdown text</span><input id="holdText" style="grid-column: span 2" title="{time} is replaced by the time left">
+      </div>
+      <p class="help">The holding screen shows the countdown text with <b>{time}</b> replaced by the time left.</p>
+    </div>
+
+    <div data-pane="jw">
+      <div class="detect" style="margin-bottom:12px">
+        <img id="detPreview" alt="">
+        <div class="text"><div class="name">What JW Library is showing</div>
+          <div class="hint">When an image or video plays, the camera cuts to the screen, then back again.</div></div>
+      </div>
+      <div class="rules" id="rules"></div>
+      <div class="setup">
+        <label>What to watch for JW Library media (an OBS screen capture only works while its scene is on air)
+          <select id="mediaSrc"></select></label>
+        <label id="audioRow">JW Library audio — optional, helps spot videos faster
+          <select id="audioSrc"></select></label>
+        <div class="row" id="idleRow">
+          <button id="idleBtn" type="button"><i data-icon="camera"></i>Save idle screen</button>
+          <span class="help" style="margin:0">Click while JW Library shows its normal screen (yeartext) with nothing playing.</span>
+        </div>
+      </div>
+      <h2 style="margin-top:20px"><i data-icon="play"></i>Practice</h2>
+      <p class="help">Try the switching without JW Library or a second screen: pretend something is showing and
+        watch the camera cut, then go back. The real JW Library display is ignored until you stop.</p>
+      <div class="actions" id="practice">
+        <button data-sim="image"><i data-icon="image"></i>Image showing</button>
+        <button data-sim="video"><i data-icon="play"></i>Video playing</button>
+        <button data-sim="idle"><i data-icon="pause"></i>Nothing showing</button>
+        <button id="simStop"><i data-icon="x"></i>Stop practice</button>
+      </div>
+      <div class="warn" id="simWarn"></div>
+    </div>
+
+    <div data-pane="track">
+      <div class="track"><canvas id="trackCanvas" width="640" height="360"></canvas></div>
+      <div class="rules" id="trackRules"></div>
+      <div class="setup">
+        <label>Camera that sees the whole platform
+          <select id="trackSrc"></select></label>
+        <label>Demonstrations area ends at <b id="splitAVal"></b>
+          <input type="range" id="splitA" min="5" max="60"></label>
+        <label>Table area starts at <b id="splitBVal"></b>
+          <input type="range" id="splitB" min="40" max="95"></label>
+        <label>Ignore people below this line (audience heads) <b id="floorVal"></b>
+          <input type="range" id="floor" min="30" max="100"></label>
+        <span class="help" style="margin:0">Picking a shot yourself pauses following for 60 seconds.
+          JW Library media always takes priority.</span>
+      </div>
+    </div>
+
+    <div data-pane="layers">
+      <p class="help" style="margin-top:0">Turn parts of the shot that’s on air on or off.</p>
+      <div class="items" id="items"><div class="empty">—</div></div>
+    </div>
+
+    <div data-pane="tablet"><div id="remoteBox"></div></div>
+  </div>
+</dialog>
+
+<dialog id="checkDlg">
+  <div class="dlgHead">
+    <h2><i data-icon="list"></i>Pre-meeting check</h2>
+    <div class="actions" style="margin:0">
+      <button id="recheckBtn">Run again</button>
+      <button class="dlgClose" title="Close"><i data-icon="x"></i></button>
+    </div>
+  </div>
+  <div class="dlgBody"><div class="checks" id="checks"></div></div>
+</dialog>
+
+<script>
+// Minimal obs-websocket v5 client (OBS 28+ ships the server built in).
+const $ = id => document.getElementById(id);
+const SUBSCRIBE = 1 | 4 | 8 | 64 | 128; // General, Scenes, Inputs, Outputs, SceneItems
+const SUB_VOLUME = 1 << 16;             // InputVolumeMeters, only while an audio source is picked
+// MeetingCamera.exe (or Serve-Remote.ps1) serves this page to tablets on this port; the exe moves
+// to 8081, 8082… if something else already has 8080.
+const REMOTE_PORT = location.protocol === 'http:' && location.port ? Number(location.port) : 8080;
+// The main PC opens it from MeetingCamera.exe at localhost (or as a file); a tablet opens it over the network.
+// Automatic switching (JW Library, people tracking, auto-start) only runs on the main PC.
+const isMain = location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname);
+// Opened by MeetingCamera.exe, which also reports setup progress and OBS's connection details.
+const inApp = isMain && location.protocol === 'http:';
+// The people detector and QR code library come with the app (lib folder). A page opened straight
+// from disk can't load them that way, so it falls back to the internet copies.
+const LIB = location.protocol === 'file:' ? null : '/lib/';
+const appFetch = (path, opts = {}) => fetch(path, { ...opts, headers: { 'X-Meeting-Camera': '1' } })
+  .then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText)));
+
+// Lucide-style line icons, 24×24.
+const ICONS = {
+  video: '<path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+  videoOff: '<path d="M10.7 6H14a2 2 0 0 1 2 2v2.5l5.2-3.1a.5.5 0 0 1 .8.5v8.2"/><path d="M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/>',
+  wide: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  table: '<path d="M3 9h18"/><path d="M5 9v11"/><path d="M19 9v11"/><path d="M5 14h14"/><path d="M8 9V6h8v3"/>',
+  mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>',
+  split: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v16"/><circle cx="6" cy="10" r="1.5"/><path d="M4 15.5a2.5 2.5 0 0 1 4 0"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+  film: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18"/><path d="M17 3v18"/><path d="M3 12h18"/><path d="M3 7.5h4"/><path d="M3 16.5h4"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>',
+  layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
+  wand: '<path d="m3 21 9-9"/><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M17.8 6.2 19 5"/><path d="M12.2 6.2 11 5"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  play: '<circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/>',
+  pause: '<circle cx="12" cy="12" r="10"/><path d="M10 15V9"/><path d="M14 15V9"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>',
+  scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="9" r="2.5"/><path d="M8 17a4 4 0 0 1 8 0"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  tablet: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 18h.01"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  list: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="m3 6 1 1 2-2"/><path d="m3 12 1 1 2-2"/><path d="m3 18 1 1 2-2"/>',
+  sliders: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+};
+const icon = name => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+document.querySelectorAll('i[data-icon]').forEach(el => { el.outerHTML = icon(el.dataset.icon); });
+
+// The room layout. OBS scenes are matched to slots by name, so "Table", "table cam"
+// or "Right - Table" all land in the Table slot. Order within ROWS = button order.
+const SLOTS = {
+  demo:    { title: 'Demonstrations',    hint: 'Left of platform',  icon: 'users',   match: n => n.includes('demo') },
+  wide:    { title: 'Platform wide',     hint: 'Whole platform',    icon: 'wide',    match: n => n.includes('wide') || n.includes('platform') },
+  table:   { title: 'Table',             hint: 'Right of platform', icon: 'table',   match: n => n.includes('table') },
+  speaker: { title: 'Speaker',           hint: 'Close-up',          icon: 'mic',     match: n => n.includes('speaker') && !n.includes('monitor') },
+  spkmon:  { title: 'Speaker + Monitor', hint: 'Side by side',      icon: 'split',   match: n => n.includes('speaker') && n.includes('monitor') },
+  monitor: { title: 'Monitor',           hint: 'Screen only',       icon: 'monitor', match: n => (n.includes('monitor') || n.includes('screen')) && !n.includes('speaker') },
+  holding: { title: 'Holding screen',    hint: 'Before the meeting', icon: 'clock',  match: n => /holding|countdown|waiting|welcome|attente|accueil/.test(n) },
+};
+const ROWS = [
+  { label: ['◀ Left', 'Platform', 'Right ▶'], slots: ['demo', 'wide', 'table'] },
+  { label: ['Speaker & screen'],              slots: ['speaker', 'spkmon', 'monitor'] },
+];  // The holding screen has its own button on the meeting card.
+// What JW Library is showing → which slot to cut to.
+const AUTO_TARGET = { image: 'spkmon', video: 'monitor' };
+
+let ws = null, connected = false, reqId = 0, reconnectTimer = null, stopRetry = false;
+const pending = new Map();
+const state = { scenes: [], current: null, items: [], camOn: false, order: [] };
+const thumbs = new Map();     // sceneName -> data URL
+const thumbImgs = new Map();  // sceneName -> <img> on its button
+
+const store = {
+  get(k, d) { try { return localStorage.getItem('obsremote.' + k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('obsremote.' + k, v); } catch {} },
+};
+
+async function sha256b64(text) {
+  const bytes = new TextEncoder().encode(text);
+  // Browsers only offer crypto.subtle on https or localhost, so a tablet (http://<PC address>) uses sha256().
+  const buf = window.crypto && crypto.subtle ? new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) : sha256(bytes);
+  return btoa(String.fromCharCode(...buf));
+}
+
+function sha256(msg) {
+  const K = new Uint32Array(64), H = new Uint32Array(8);
+  const frac = x => (x - Math.floor(x)) * 2 ** 32 >>> 0;
+  for (let n = 2, i = 0; i < 64; n++) {
+    let prime = true;
+    for (let d = 2; d * d <= n; d++) if (n % d === 0) { prime = false; break; }
+    if (!prime) continue;
+    if (i < 8) H[i] = frac(Math.sqrt(n));
+    K[i++] = frac(Math.cbrt(n));
+  }
+  const len = msg.length, padded = new Uint8Array(((len + 9 + 63) >> 6) << 6);
+  padded.set(msg); padded[len] = 0x80;
+  const view = new DataView(padded.buffer);
+  view.setUint32(padded.length - 8, Math.floor(len / 2 ** 29)); view.setUint32(padded.length - 4, len << 3);
+  const w = new Uint32Array(64), rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < padded.length; off += 64) {
+    for (let t = 0; t < 16; t++) w[t] = view.getUint32(off + t * 4);
+    for (let t = 16; t < 64; t++) {
+      const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+      const s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+      w[t] = w[t - 16] + s0 + w[t - 7] + s1;
+    }
+    let [a, b, c, d, e, f, g, h] = H;
+    for (let t = 0; t < 64; t++) {
+      const t1 = h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[t] + w[t];
+      const t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+  }
+  const out = new Uint8Array(32);
+  H.forEach((v, i) => new DataView(out.buffer).setUint32(i * 4, v));
+  return out;
+}
+
+function call(requestType, requestData = {}) {
+  return new Promise((resolve, reject) => {
+    if (!connected) return reject(new Error('Not connected'));
+    const requestId = String(++reqId);
+    pending.set(requestId, { resolve, reject });
+    ws.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
+  });
+}
+
+const subscriptions = () => SUBSCRIBE | (auto.audioSrc ? SUB_VOLUME : 0);
+
+// In the app, OBS's own settings say which port and password to use.
+async function fillFromObs() {
+  try {
+    const o = await appFetch('/obs');
+    if (!o.found) return true;
+    $('host').value = 'localhost'; $('port').value = o.port; $('password').value = o.password;
+    $('connAuto').hidden = false;
+    return o.enabled;
+  } catch { return true; }
+}
+
+async function connect(typed = false) {
+  clearTimeout(reconnectTimer);
+  stopRetry = false;
+  if (ws) { ws.onclose = null; ws.close(); }
+  if (inApp && !typed && !(await fillFromObs())) {
+    setStatus(false, 'OBS remote control is off');
+    showMsg('OBS’s remote control is switched off. Close OBS and click “Run again” above, ' +
+            'or in OBS open Tools → WebSocket Server Settings and tick “Enable WebSocket server”.', true);
+    reconnectTimer = setTimeout(connect, 5000);
+    return;
+  }
+  const host = $('host').value.trim() || 'localhost';
+  const port = $('port').value.trim() || '4455';
+  const password = $('password').value;
+  store.set('host', host); store.set('port', port); store.set('password', password);
+
+  setStatus(false, 'Connecting…');
+  ws = new WebSocket(`ws://${host}:${port}`);
+
+  ws.onmessage = async ({ data }) => {
+    const { op, d } = JSON.parse(data);
+    if (op === 0) { // Hello
+      const identify = { rpcVersion: 1, eventSubscriptions: subscriptions() };
+      if (d.authentication) {
+        const secret = await sha256b64(password + d.authentication.salt);
+        identify.authentication = await sha256b64(secret + d.authentication.challenge);
+      }
+      ws.send(JSON.stringify({ op: 1, d: identify }));
+    } else if (op === 2) { // Identified
+      connected = true;
+      // On a tablet the address keeps what it took to connect, so "Add to Home Screen" makes an
+      // app that connects by itself (on an iPad it doesn't share the browser's saved settings).
+      if (!isMain) history.replaceState(null, '', '#' + new URLSearchParams({ host, port, pw: password }));
+      state.wasConnected = true;
+      setStatus(true, 'Connected to OBS');
+      hideMsg();
+      if ($('settingsDlg').open && settingsTab === 'connection') $('settingsDlg').close();
+      loadAll();
+    } else if (op === 5) {
+      onEvent(d.eventType, d.eventData || {});
+    } else if (op === 7) {
+      const p = pending.get(d.requestId);
+      if (!p) return;
+      pending.delete(d.requestId);
+      d.requestStatus.result ? p.resolve(d.responseData || {})
+                             : p.reject(new Error(d.requestStatus.comment || 'Request failed'));
+    }
+  };
+
+  ws.onclose = ({ code }) => {
+    connected = false;
+    pending.forEach(p => p.reject(new Error('Disconnected')));
+    pending.clear();
+    setStatus(false, 'Not connected');
+    $('camBtn').disabled = true;
+    if (code === 4008 || code === 4009) {
+      stopRetry = true;
+      if (isMain) {
+        showMsg(code === 4008 ? 'OBS needs its password — see Settings.' : 'OBS didn’t accept the password — see Settings.', true);
+        openSettings('connection');
+        $('password').focus();
+      } else {
+        // A home-screen app can't be handed the code: the camera opens it in the browser instead.
+        const app = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+        showMsg(app ? 'OBS didn’t accept the password. On the meeting PC click “Tablet”, scan the code with this tablet’s ' +
+                      'camera, and once it connects in the browser, add it to the Home Screen again (and remove this one).'
+                    : 'This tablet isn’t connected yet. On the meeting PC, click “Tablet” at the top and scan the code.', true);
+      }
+    } else {
+      setStatus(false, isMain ? 'Waiting for OBS…' : `Can’t reach OBS on ${$('host').value}…`);
+      if (!isMain && !state.wasConnected)
+        showMsg('Can’t reach the meeting PC. Check the tablet is on the hall Wi-Fi and OBS is open, ' +
+                'or scan the code again (“Tablet” on the meeting PC).', true);
+    }
+    if (!stopRetry) reconnectTimer = setTimeout(connect, 3000);
+  };
+}
+
+async function loadAll() {
+  const [scenes, cam, inputs] = await Promise.all([
+    call('GetSceneList'), call('GetVirtualCamStatus'), call('GetInputList'),
+  ]);
+  state.scenes = scenes.scenes;
+  state.current = scenes.currentProgramSceneName;
+  setCam(cam.outputActive);
+  renderShots();
+  holdingOnStart();
+  loadItems();
+  loadTimes().catch(() => {});
+  await fillSourcePickers(inputs.inputs.map(i => i.inputName));
+}
+
+async function loadItems() {
+  if (!state.current) return;
+  try {
+    const { sceneItems } = await call('GetSceneItemList', { sceneName: state.current });
+    state.items = sceneItems.slice().reverse(); // top layer first, like OBS
+  } catch { state.items = []; }
+  renderItems();
+}
+
+function onEvent(type, e) {
+  switch (type) {
+    case 'CurrentProgramSceneChanged': state.current = e.sceneName; renderShots(); loadItems(); break;
+    case 'SceneListChanged': state.scenes = e.scenes; renderShots(); break;
+    case 'VirtualcamStateChanged': setCam(e.outputActive); break;
+    case 'CustomEvent': if (e.meetingCameraTimes) applyTimes(e.meetingCameraTimes); break;
+    case 'SceneItemEnableStateChanged':
+      if (e.sceneName === state.current) {
+        const it = state.items.find(i => i.sceneItemId === e.sceneItemId);
+        if (it) { it.sceneItemEnabled = e.sceneItemEnabled; renderItems(); }
+      }
+      break;
+    case 'SceneItemCreated': case 'SceneItemRemoved': case 'SceneItemListReindexed':
+      if (e.sceneName === state.current) loadItems();
+      break;
+    case 'InputCreated': case 'InputRemoved': case 'InputNameChanged':
+      call('GetInputList').then(r => fillSourcePickers(r.inputs.map(i => i.inputName))).catch(() => {});
+      break;
+    case 'InputVolumeMeters': {
+      const m = e.inputs.find(i => i.inputName === auto.audioSrc);
+      if (m && m.inputLevelsMul.some(ch => ch[1] > 0.01)) auto.lastAudioAt = Date.now();
+      break;
+    }
+    case 'ExitStarted': ws.close(); break;
+  }
+}
+
+function setStatus(on, text) {
+  $('dot').classList.toggle('on', on);
+  $('statusText').textContent = text;
+  renderGridBar();
+}
+
+function setCam(on) {
+  state.camOn = on;
+  const btn = $('camBtn');
+  btn.disabled = !connected;
+  btn.classList.toggle('live', on);
+  btn.innerHTML = on ? icon('videoOff') + 'Stop camera' : icon('video') + 'Start camera';
+  $('badge').classList.toggle('live', on);
+  $('badge').textContent = on ? '● LIVE TO ZOOM' : 'OFF AIR';
+  renderGrid();
+}
+
+// Assign each OBS scene to at most one slot; anything unmatched goes under "Other".
+function layout() {
+  // OBS lists the highest sceneIndex at the top of its Scenes dock.
+  const names = state.scenes.slice().sort((a, b) => b.sceneIndex - a.sceneIndex).map(s => s.sceneName);
+  const used = new Set(), bySlot = {};
+  // Check the most specific slots first so "Speaker + Monitor" isn't grabbed by "Speaker".
+  for (const key of ['holding', 'spkmon', 'demo', 'table', 'wide', 'speaker', 'monitor']) {
+    const name = names.find(n => !used.has(n) && SLOTS[key].match(n.toLowerCase()));
+    if (name) { bySlot[key] = name; used.add(name); }
+  }
+  return { bySlot, others: names.filter(n => !used.has(n)) };
+}
+
+function shotButton(title, hint, iconName, sceneName) {
+  const b = document.createElement('button');
+  b.className = 'shot';
+  b.innerHTML = `<div class="thumb"><img alt=""></div>
+    <div class="meta"><span class="ico">${icon(iconName)}</span>
+      <div class="text"><div class="name"></div><div class="hint"></div></div><span class="key"></span></div>`;
+  b.querySelector('.name').textContent = title;
+  b.querySelector('.hint').textContent = hint;
+  if (!sceneName) {
+    b.classList.add('missing');
+    b.disabled = true;
+    b.querySelector('.hint').textContent = 'No matching scene in OBS';
+    return b;
+  }
+  if (sceneName === state.current) b.classList.add('active');
+  const n = state.order.push(sceneName);
+  if (n <= 9) b.querySelector('.key').textContent = n;
+  const img = b.querySelector('img');
+  if (thumbs.has(sceneName)) img.src = thumbs.get(sceneName);
+  thumbImgs.set(sceneName, img);
+  b.title = `OBS scene: ${sceneName}`;
+  b.onclick = () => manualSwitch(sceneName);
+  return b;
+}
+
+function rowLabel(parts) {
+  const d = document.createElement('div');
+  d.className = 'rowLabel';
+  parts.forEach(p => { const s = document.createElement('span'); s.textContent = p; d.appendChild(s); });
+  return d;
+}
+
+function renderShots() {
+  const box = $('shots');
+  box.innerHTML = '';
+  state.order = [];
+  thumbImgs.clear();
+  if (!state.scenes.length) { box.innerHTML = '<div class="empty">No scenes yet — add them in OBS.</div>'; return; }
+
+  const { bySlot, others } = layout();
+  for (const row of ROWS) {
+    box.appendChild(rowLabel(row.label));
+    const grid = document.createElement('div');
+    grid.className = 'stage';
+    row.slots.forEach(k => grid.appendChild(shotButton(SLOTS[k].title, SLOTS[k].hint, SLOTS[k].icon, bySlot[k])));
+    box.appendChild(grid);
+  }
+  if (others.length) {
+    box.appendChild(rowLabel(['Other scenes']));
+    const grid = document.createElement('div');
+    grid.className = 'stage';
+    others.forEach(n => grid.appendChild(shotButton(n, '', 'film', n)));
+    box.appendChild(grid);
+  }
+
+  const onHold = !!bySlot.holding && state.current === bySlot.holding;
+  $('holdBtn').classList.toggle('active', onHold);
+  $('holdBtn').lastChild.textContent = onHold ? 'Holding screen is on' : 'Holding screen';
+  $('shotsHint').textContent = isMain && state.order.length ? `Click, or press 1–${Math.min(9, state.order.length)}` : '';
+
+  const slot = Object.keys(bySlot).find(k => bySlot[k] === state.current);
+  const onAir = $('onAir');
+  onAir.innerHTML = state.current ? icon(slot ? SLOTS[slot].icon : 'film') + '<span></span>' : '';
+  if (state.current) onAir.lastChild.textContent = slot ? SLOTS[slot].title : state.current;
+  renderRules(bySlot);
+  renderPractice();
+  renderGrid();
+}
+
+function renderItems() {
+  const box = $('items');
+  box.innerHTML = '';
+  state.items.forEach(it => {
+    const b = document.createElement('button');
+    b.className = 'item' + (it.sceneItemEnabled ? ' on' : '');
+    b.innerHTML = '<span></span><span class="switch"></span>';
+    b.firstChild.textContent = it.sourceName;
+    b.onclick = () => call('SetSceneItemEnabled', {
+      sceneName: state.current, sceneItemId: it.sceneItemId, sceneItemEnabled: !it.sceneItemEnabled,
+    }).catch(showError);
+    box.appendChild(b);
+  });
+  if (!state.items.length) box.innerHTML = '<div class="empty">This scene has no layers.</div>';
+}
+
+function switchScene(name) { call('SetCurrentProgramScene', { sceneName: name }).catch(showError); }
+// Picking a shot turns Follow people off, so it stays on that shot until it's switched back on.
+// JW Library media still cuts to the screen and back.
+function manualSwitch(name) {
+  if (track.on) { setTrackOn(false); track.offByPick = true; renderTrack(); }
+  switchScene(name);
+}
+function toggleCam() { call(state.camOn ? 'StopVirtualCam' : 'StartVirtualCam').catch(showError); }
+// A banner under the header: errors disappear after a while, notes stay until fixed.
+let msgTimer = null;
+function showMsg(text, sticky = false) {
+  clearTimeout(msgTimer);
+  $('msg').textContent = text;
+  $('msg').hidden = false;
+  if (!sticky) msgTimer = setTimeout(hideMsg, 8000);
+}
+function hideMsg() { clearTimeout(msgTimer); $('msg').hidden = true; }
+function showError(err) { showMsg(err.message || String(err)); }
+
+function screenshot(sourceName, imageWidth, imageCompressionQuality) {
+  return call('GetSourceScreenshot', { sourceName, imageFormat: 'jpg', imageWidth, imageCompressionQuality })
+    .then(r => r.imageData);
+}
+
+function setThumb(name, src) {
+  thumbs.set(name, src);
+  const img = thumbImgs.get(name);
+  if (img) img.src = src;
+  const tile = gridImgs.get(name);
+  if (tile) tile.src = src;
+}
+
+// ---------------------------------------------------------------------------
+// Grid view: just the shots, big - for a tablet on a stand, or the PC. Each device remembers it;
+// a tablet starts in it.
+// ---------------------------------------------------------------------------
+const gridImgs = new Map();   // sceneName -> <img> of its tile
+let gridMode = store.get('gridMode', isMain ? '0' : '1') === '1';
+
+function setGridMode(on) {
+  gridMode = on;
+  store.set('gridMode', on ? '1' : '0');
+  document.body.classList.toggle('gridMode', on);
+  $('gridView').hidden = !on;
+  renderGrid();
+  if (on) showPage(1, false);
+}
+
+// Two pages side by side: the shot on air full screen (swipe right to it), then all the shots.
+let gridPage = 1;
+function showPage(n, smooth = true) {
+  gridPage = n;
+  $('pager').scrollTo({ left: n * $('pager').clientWidth, behavior: smooth ? 'smooth' : 'auto' });
+  renderDots();
+}
+function renderDots() {
+  document.querySelectorAll('.pageDots button').forEach(b => b.setAttribute('aria-current', +b.dataset.page === gridPage));
+}
+document.querySelectorAll('.pageDots button').forEach(b => { b.onclick = () => showPage(+b.dataset.page); });
+$('pager').addEventListener('scroll', () => {
+  const n = Math.round($('pager').scrollLeft / Math.max(1, $('pager').clientWidth));
+  if (n !== gridPage) { gridPage = n; renderDots(); }
+}, { passive: true });
+addEventListener('resize', () => { if (gridMode) showPage(gridPage, false); });   // stays on its page when turned
+$('gridBtn').onclick = () => setGridMode(true);
+$('gExit').onclick = () => setGridMode(false);
+$('gCam').onclick = toggleCam;
+
+function renderGrid() {
+  gridImgs.clear();
+  if (!gridMode) return;
+  const box = $('gridTiles');
+  box.innerHTML = '';
+  const { bySlot, others } = layout();
+  const tiles = [
+    ...ROWS.flatMap(r => r.slots).filter(k => bySlot[k]).map(k => [SLOTS[k].title, bySlot[k]]),
+    ...(bySlot.holding ? [[SLOTS.holding.title, bySlot.holding]] : []),
+    ...others.map(n => [n, n]),
+  ];
+  if (!tiles.length) box.innerHTML = `<div class="empty">${connected ? 'No scenes yet — add them in OBS.' : 'Waiting for OBS…'}</div>`;
+  for (const [title, scene] of tiles) {
+    const b = document.createElement('button');
+    b.className = 'tile' + (scene === state.current ? ' active' + (state.camOn ? ' live' : '') : '');
+    b.innerHTML = '<img alt=""><span class="name"></span>';
+    b.querySelector('.name').textContent = title;
+    const img = b.querySelector('img');
+    if (thumbs.has(scene)) img.src = thumbs.get(scene);
+    gridImgs.set(scene, img);
+    b.onclick = () => scene === bySlot.holding ? showHolding() : manualSwitch(scene);
+    box.appendChild(b);
+  }
+  renderGridBar();
+}
+
+function renderGridBar() {
+  if (!gridMode) return;
+  $('gDot').classList.toggle('on', connected);
+  $('gBadge').classList.toggle('live', state.camOn);
+  $('gBadge').textContent = state.camOn ? '● LIVE' : 'OFF AIR';
+  const slot = Object.entries(layout().bySlot).find(([, n]) => n === state.current);
+  $('gOnAir').textContent = !connected ? $('statusText').textContent : slot ? SLOTS[slot[0]].title : state.current || '';
+  $('gCam').disabled = !connected;
+  $('gCam').classList.toggle('live', state.camOn);
+  $('gCam').innerHTML = (state.camOn ? icon('videoOff') : icon('video')) + `<span class="lbl">${state.camOn ? 'Stop camera' : 'Start camera'}</span>`;
+  $('fBadge').className = state.camOn ? 'live' : '';
+  $('fBadge').textContent = $('gBadge').textContent;
+  $('fName').textContent = $('gOnAir').textContent;
+}
+
+// Live preview of what Zoom sees. The next picture is asked for as soon as the last one is up,
+// up to PREVIEW_FPS a second, so it runs as smoothly as the connection allows (a tablet on busy
+// Wi-Fi just gets fewer).
+const PREVIEW_FPS = 15;
+(async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let thumbAt = 0;
+  await sleep(0);   // the rest of the page sets up first
+  for (;;) {
+    const started = performance.now();
+    if (connected && state.current && !document.hidden) {
+      const name = state.current;
+      try {
+        const src = await screenshot(name, gridMode && gridPage === 0 ? 1280 : 640, 70);   // sharper when full screen
+        const img = new Image();
+        img.src = src;
+        await img.decode();   // swapped in only once it's ready to show, so it never flickers
+        if (name === state.current) {
+          $('preview').src = src;
+          if (gridMode) {
+            if (gridImgs.has(name)) gridImgs.get(name).src = src;
+            $('fullImg').src = src;
+          }
+        }
+        if (started - thumbAt > 1000) { thumbAt = started; setThumb(name, src); }
+      } catch {}
+    }
+    await sleep(Math.max(0, 1000 / PREVIEW_FPS - (performance.now() - started)));
+  }
+})();
+
+// Thumbnails for the other shots, one at a time in rotation so OBS isn't flooded.
+let thumbBusy = false, thumbIdx = 0;
+setInterval(async () => {
+  if (!connected || thumbBusy || document.hidden) return;
+  const others = [...state.order, layout().bySlot.holding].filter(n => n && n !== state.current);
+  if (!others.length) return;
+  const name = others[thumbIdx++ % others.length];
+  thumbBusy = true;
+  try {
+    // OBS shows a screen capture only while it's on air, so the Monitor shot comes from JW Library.
+    const fromJw = inApp && name === layout().bySlot.monitor;
+    setThumb(name, fromJw ? await jwScreen(320, 180) : await screenshot(name, 320, 50));
+  } catch {} finally { thumbBusy = false; }
+}, 500);
+
+// ---------------------------------------------------------------------------
+// JW Library auto-switch.
+// Twice a second we grab a tiny greyscale frame of the JW Library display source:
+//   looks like the saved idle screen          → idle
+//   different from idle, not changing         → image  → Speaker + Monitor
+//   different from idle, changing (or audio)  → video  → Monitor
+// When it goes back to idle we return to whatever shot was on before.
+// ---------------------------------------------------------------------------
+const DET = {
+  w: 64, h: 36,
+  idleDiff: 14,   // mean pixel difference (0–255) from the idle screen that counts as "media showing"
+  motion: 2.5,    // mean pixel difference between consecutive frames that counts as "moving"
+  history: 20,    // samples kept (20 × 0.5 s = 10 s)
+};
+// In the app, JW Library media is spotted on JW Library's own second display window. OBS can't be
+// used for that: it only captures a screen while that screen's scene is on air.
+const JW_SCREEN = '@jw';
+if (inApp && store.get('mediaSrcV2', '') !== '1') { store.set('mediaSrc', JW_SCREEN); store.set('mediaSrcV2', '1'); }
+const auto = {
+  on: store.get('autoOn', '1') === '1',
+  mediaSrc: store.get('mediaSrc', ''),
+  screenMissing: false,
+  audioSrc: store.get('audioSrc', ''),
+  idleRef: null,
+  prev: null, history: [], det: 'idle',
+  lastAudioAt: 0,
+  returnScene: null, autoScene: null,
+};
+try {
+  const s = store.get('idleRef', '');
+  if (s && store.get('idleRefSrc', '') === auto.mediaSrc) auto.idleRef = Uint8Array.from(atob(s), c => c.charCodeAt(0));
+} catch {}
+
+// A picture of JW Library's second display from the app, as a data URL (throws if it's not open).
+async function jwScreen(w, h) {
+  const r = await fetch(`/jw/screen?w=${w}&h=${h}`, { headers: { 'X-Meeting-Camera': '1' } });
+  if (!r.ok) throw new Error('JW Library’s second display isn’t open');
+  const blob = await r.blob();
+  return new Promise(resolve => { const f = new FileReader(); f.onload = () => resolve(f.result); f.readAsDataURL(blob); });
+}
+
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Bad image from OBS'));
+    img.src = url;
+  });
+}
+
+async function grayFrom(url, w = DET.w, h = DET.h) {
+  const img = await loadImage(url);
+  canvas.width = w; canvas.height = h;
+  ctx.drawImage(img, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const g = new Uint8Array(w * h);
+  for (let i = 0; i < g.length; i++) g[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
+  return g;
+}
+const toGray = url => grayFrom(url);
+
+// Small greyscale frame of any OBS source or scene.
+async function grayOf(sourceName, w = DET.w, h = DET.h) {
+  const { imageData } = await call('GetSourceScreenshot', { sourceName, imageFormat: 'png', imageWidth: w, imageHeight: h });
+  return grayFrom(imageData, w, h);
+}
+
+function isDark(g) {
+  let m = 0; for (const v of g) m += v;
+  return m / g.length < 14 && spread(g) < 6;
+}
+
+function meanDiff(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
+  return s / a.length;
+}
+
+function spread(a) { // standard deviation; a blank/black screen is near 0
+  let m = 0; for (const v of a) m += v; m /= a.length;
+  let s = 0; for (const v of a) s += (v - m) ** 2;
+  return Math.sqrt(s / a.length);
+}
+
+function sample(gray) {
+  // An OBS source is watched for change. Without a saved idle screen, a busy picture counts as media.
+  const present = auto.idleRef ? meanDiff(gray, auto.idleRef) > DET.idleDiff : spread(gray) > 12;
+  const moving = auto.prev ? meanDiff(gray, auto.prev) > DET.motion : false;
+  auto.prev = gray;
+  auto.history.push({ present, moving, audio: Date.now() - auto.lastAudioAt < 1000 });
+  if (auto.history.length > DET.history) auto.history.shift();
+  setDetected(classify());
+}
+
+function classify() {
+  const h = auto.history, cur = auto.det;
+  if (h.length >= 2 && !h.at(-1).present && !h.at(-2).present) return 'idle';
+  if (!h.at(-1).present) return cur; // one-frame blip, wait and see
+
+  const last4 = h.slice(-4).filter(s => s.present);
+  const movingCount = last4.filter(s => s.moving).length;
+  // A fade-in moves for a frame or two, so ask for ~1.5 s of motion before calling it a video.
+  if (last4.length >= 3 && (movingCount >= 3 || last4.some(s => s.audio))) return 'video';
+
+  // Videos have still moments; only drop back to "image" after 10 s with no motion or sound.
+  if (cur === 'video') {
+    return h.length === DET.history && h.every(s => s.present && !s.moving && !s.audio) ? 'image' : 'video';
+  }
+  const last3 = h.slice(-3);
+  if (last3.length === 3 && last3.every(s => s.present && !s.moving)) return 'image';
+  return cur;
+}
+
+function setDetected(next) {
+  if (next === auto.det) return;
+  auto.det = next;
+  renderDetect();
+  if (!auto.on || !connected) return;
+
+  const { bySlot } = layout();
+  // From any shot, the holding screen included: it comes back once the media has finished.
+  if (next === 'idle') {
+    // Only go back if the operator didn't pick a different shot in the meantime.
+    if (auto.autoScene && state.current === auto.autoScene && auto.returnScene) switchScene(auto.returnScene);
+    auto.autoScene = auto.returnScene = null;
+    return;
+  }
+  const target = bySlot[AUTO_TARGET[next]];
+  if (!target) { showError(`Auto-switch: no "${SLOTS[AUTO_TARGET[next]].title}" scene found in OBS.`); return; }
+  if (!auto.autoScene) auto.returnScene = state.current;   // first media item: remember where we were
+  else if (state.current !== auto.autoScene) return;       // operator took over manually; leave it alone
+  auto.autoScene = target;
+  if (state.current !== target) switchScene(target);
+}
+
+function renderDetect() {
+  const box = $('detect');
+  const views = {
+    none:  ['help',  'Not set up',      'Click Adjust… and pick the JW Library display.'],
+    noscreen: ['monitor', 'JW Library isn’t open', 'Open JW Library to cut to the screen when media plays.'],
+    idle:  ['pause', 'Nothing showing', auto.on ? 'Cuts to the screen when media plays' : 'Turn on to cut to the screen when media plays'],
+    image: ['image', 'Image showing',   auto.on ? `On air: ${SLOTS.spkmon.title}` : 'Not switching (off)'],
+    video: ['play',  'Video playing',   auto.on ? `On air: ${SLOTS.monitor.title}` : 'Not switching (off)'],
+  };
+  const key = auto.sim ? auto.det : !auto.mediaSrc ? 'none'
+            : auto.mediaSrc === JW_SCREEN && auto.screenMissing ? 'noscreen' : auto.det;
+  const [ic, title, hint] = views[key];
+  const name = auto.sim ? `${title} (practice)` : title;
+  box.className = 'detect ' + key;
+  $('detIco').innerHTML = icon(ic);
+  $('detName').textContent = name;
+  $('detHint').textContent = hint;
+
+  const btn = $('autoBtn');
+  btn.classList.toggle('on', auto.on);
+  btn.firstChild.textContent = auto.on ? 'On' : 'Off';
+  btn.setAttribute('aria-checked', auto.on);
+
+  renderPractice();
+  // JW Library itself says what's open, so the idle screen and audio only matter for an OBS source.
+  $('idleRow').hidden = $('audioRow').hidden = auto.mediaSrc === JW_SCREEN;
+  $('detWarn').textContent = !auto.sim && auto.mediaSrc && auto.mediaSrc !== JW_SCREEN && !auto.idleRef
+    ? 'Tip: under Adjust…, click “Save idle screen” so the yeartext isn’t mistaken for an image.' : '';
+}
+
+function renderRules(bySlot) {
+  const name = k => bySlot[k] ? SLOTS[k].title : `${SLOTS[k].title} (missing)`;
+  $('rules').innerHTML =
+    `${icon('image')}<span>Image → <b></b></span>${icon('play')}<span>Video → <b></b></span>` +
+    `${icon('undo')}<span>Finished → back to the previous shot</span>`;
+  const b = $('rules').querySelectorAll('b');
+  b[0].textContent = name('spkmon');
+  b[1].textContent = name('monitor');
+}
+
+async function firstLayer(sceneName, names) {
+  if (!sceneName) return null;
+  try {
+    const { sceneItems } = await call('GetSceneItemList', { sceneName });
+    const first = sceneItems.slice().reverse().find(i => !i.isGroup && names.includes(i.sourceName));
+    return first ? first.sourceName : null;
+  } catch { return null; }
+}
+
+async function fillSourcePickers(names) {
+  // Sensible defaults: the Monitor scene shows JW Library, the Platform wide scene shows the platform camera.
+  const { bySlot } = layout();
+  if (!auto.mediaSrc && !inApp) { const n = await firstLayer(bySlot.monitor, names); if (n) setMediaSrc(n); }
+  if (!track.src) { const n = await firstLayer(bySlot.wide, names); if (n) setTrackSrc(n); }
+  const fill = (sel, value, first) => {
+    sel.innerHTML = '';
+    [...first, ...names.map(n => [n, `OBS: ${n}`])].forEach(([v, t]) => {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = t; o.selected = v === value;
+      sel.appendChild(o);
+    });
+  };
+  fill($('mediaSrc'), auto.mediaSrc, inApp ? [[JW_SCREEN, 'JW Library’s second display (automatic)'], ['', 'None']]
+                                           : [['', '— choose —']]);
+  fill($('audioSrc'), auto.audioSrc, [['', 'None']]);
+  fill($('trackSrc'), track.src, [['', '— choose —']]);
+  renderDetect();
+  renderTrack();
+}
+
+function setMediaSrc(name) {
+  if (name === auto.mediaSrc) return;
+  auto.mediaSrc = name;
+  auto.idleRef = null; auto.prev = null; auto.history = []; auto.det = 'idle';
+  $('detPreview').removeAttribute('src');
+  store.set('mediaSrc', name);
+  renderDetect();
+}
+
+$('mediaSrc').onchange = e => setMediaSrc(e.target.value);
+$('audioSrc').onchange = e => {
+  auto.audioSrc = e.target.value;
+  store.set('audioSrc', auto.audioSrc);
+  if (connected) ws.send(JSON.stringify({ op: 3, d: { eventSubscriptions: subscriptions() } })); // Reidentify
+};
+// The picture JW Library shows with nothing playing (the yeartext). Anything different is media.
+function saveIdle(gray) {
+  auto.idleRef = gray;
+  auto.history = [];
+  store.set('idleRef', btoa(String.fromCharCode(...gray)));
+  store.set('idleRefSrc', auto.mediaSrc);
+  setDetected('idle');   // and cut back if it had switched to the screen
+  renderDetect();
+}
+$('idleBtn').onclick = () => {
+  if (!auto.prev) return showError('No picture from the JW Library display source yet.');
+  saveIdle(auto.prev);
+  hideMsg();
+};
+function toggleAuto() {
+  auto.on = !auto.on;
+  auto.autoScene = auto.returnScene = null;
+  store.set('autoOn', auto.on ? '1' : '0');
+  renderDetect();
+}
+$('autoBtn').onclick = toggleAuto;
+
+// Practice: pretend JW Library is showing something, to try the switching without a second screen.
+function simulate(det) {
+  if (!auto.sim) { auto.sim = true; auto.history = []; auto.prev = null; }
+  setDetected(det);
+  renderDetect();
+}
+function stopPractice() {
+  setDetected('idle');   // goes back to the previous shot, like the real thing
+  auto.sim = false;
+  renderDetect();
+}
+function renderPractice() {
+  document.querySelectorAll('[data-sim]').forEach(b => b.setAttribute('aria-pressed', !!auto.sim && auto.det === b.dataset.sim));
+  $('simStop').hidden = !auto.sim;
+  $('simWarn').textContent = !auto.sim ? ''
+    : !connected ? 'Connect to OBS to see the camera switch.'
+    : !auto.on ? 'JW Library media is switched off, so the camera won’t move. Turn it on with the switch on its card.'
+    : '';
+}
+document.querySelectorAll('[data-sim]').forEach(b => { b.onclick = () => simulate(b.dataset.sim); });
+$('simStop').onclick = stopPractice;
+
+// Browsers slow down timers in background tabs, which would break auto-switching while
+// Zoom is in front. Timers inside a Web Worker keep running, so tick from one of those.
+function everyMs(ms, fn) {
+  try {
+    const src = `setInterval(() => postMessage(0), ${ms})`;
+    const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    w.onmessage = fn;
+    w.onerror = () => { w.terminate(); setInterval(fn, ms); };
+  } catch { setInterval(fn, ms); }
+}
+
+let detBusy = false;
+everyMs(500, async () => {
+  if (!isMain || !connected || !auto.mediaSrc || auto.sim || detBusy) return;
+  detBusy = true;
+  try {
+    let imageData;
+    if (auto.mediaSrc === JW_SCREEN) {
+      // In the app JW Library says itself what it has open - a picture, or a video playing or
+      // paused - whichever screen it shows it on. The screen picture is only for the preview.
+      const [state, frame] = await Promise.all([
+        appFetch('/jw/state').catch(() => null), jwScreen(DET.w, DET.h).catch(() => null),
+      ]);
+      if (frame && !document.hidden) $('detPreview').src = frame;
+      const closed = !state || state.media === 'closed';
+      if (closed !== auto.screenMissing) { auto.screenMissing = closed; renderDetect(); }
+      if (state && state.media === 'unknown') return;   // JW Library is between pages: keep the shot
+      const now = state && state.media === 'video' ? 'video' : state && state.media === 'image' ? 'image' : 'idle';
+      // Going from one item to the next passes through the media list for a moment; only call it
+      // finished after a second of nothing, so the camera doesn't bounce.
+      auto.idleCount = now === 'idle' ? (auto.idleCount || 0) + 1 : 0;
+      if (now !== 'idle' || auto.idleCount >= 2) setDetected(now);
+      return;
+    } else {
+      ({ imageData } = await call('GetSourceScreenshot', {
+        sourceName: auto.mediaSrc, imageFormat: 'png', imageWidth: DET.w, imageHeight: DET.h,
+      }));
+    }
+    if (!document.hidden) $('detPreview').src = imageData;
+    sample(await toGray(imageData));
+  } catch {} finally { detBusy = false; }
+});
+
+// ---------------------------------------------------------------------------
+// Follow people on platform.
+// Once a second a person detector (COCO-SSD, runs in the browser) looks at the platform
+// camera. Each person is placed in a zone by where the middle of their body is:
+//   only left → Demonstrations · only centre → Speaker · only right → Table
+//   more than one zone → Platform wide · nobody → keep the current shot
+// A zone has to hold for 3 s before we cut, and cuts are at least 5 s apart.
+// ---------------------------------------------------------------------------
+const ZONES = [
+  { key: 'demo',    color: '96,165,250' },
+  { key: 'speaker', color: '250,204,21' },
+  { key: 'table',   color: '74,222,128' },
+];
+const track = {
+  on: store.get('trackOn', '0') === '1',
+  src: store.get('trackSrc', ''),
+  splitA: +store.get('splitA', 33), splitB: +store.get('splitB', 67), floor: +store.get('floor', 100),
+  model: null, loading: null, status: '', error: '',
+  img: null, people: [], want: null, wantCount: 0, lastSwitchAt: 0, offByPick: false,
+};
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(LIB ? `Couldn’t load ${src} from the app.` : 'Download failed — check the internet connection.'));
+    document.head.appendChild(s);
+  });
+}
+
+function loadModel() {
+  track.loading ??= (async () => {
+    const CDN = 'https://cdn.jsdelivr.net/npm/';
+    const WASM = LIB || CDN + '@tensorflow/tfjs-backend-wasm@4.22.0/dist/';
+    await loadScript(LIB ? LIB + 'tf.min.js' : CDN + '@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+    await loadScript(WASM + 'tf-backend-wasm.min.js');
+    await loadScript(LIB ? LIB + 'coco-ssd.min.js' : CDN + '@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
+    // The WASM backend keeps working when the tab is in the background; WebGL is the fallback.
+    let ok = false;
+    try { tf.wasm.setWasmPaths(WASM); ok = await tf.setBackend('wasm'); } catch {}
+    if (!ok) await tf.setBackend('webgl');
+    await tf.ready();
+    return cocoSsd.load({ base: 'lite_mobilenet_v2', ...(LIB && { modelUrl: LIB + 'model/model.json' }) });
+  })().catch(err => { track.loading = null; throw err; });
+  return track.loading;
+}
+
+// Which zone a person stands in, or null if they're below the "ignore" line (audience).
+function zoneOf(p) {
+  const cx = (p.x + p.w / 2) * 100, cy = (p.y + p.h / 2) * 100;
+  if (cy > track.floor) return null;
+  return cx < track.splitA ? 'demo' : cx > track.splitB ? 'table' : 'speaker';
+}
+
+function decideTrack() {
+  const zones = new Set(track.people.map(zoneOf).filter(Boolean));
+  const want = zones.size === 0 ? null : zones.size === 1 ? [...zones][0] : 'wide';
+  if (want !== track.want) { track.want = want; track.wantCount = 0; }
+  track.wantCount++;
+
+  if (!want || trackPausedBy()) return;
+  if (track.wantCount < 3 || Date.now() - track.lastSwitchAt < 5000) return;
+  const target = layout().bySlot[want];
+  if (!target || target === state.current) return;
+  track.lastSwitchAt = Date.now();
+  switchScene(target);
+}
+
+function trackPausedBy() {
+  if (auto.autoScene) return 'media';
+  if (state.current && state.current === layout().bySlot.holding) return 'holding';
+  return null;
+}
+
+function drawTrack() {
+  const c = $('trackCanvas'), g = c.getContext('2d'), W = c.width, H = c.height;
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  if (track.img) g.drawImage(track.img, 0, 0, W, H);
+
+  const bounds = [0, track.splitA, track.splitB, 100].map(v => v / 100 * W);
+  const occupied = new Set(track.people.map(zoneOf));
+  g.font = '600 15px system-ui, sans-serif';
+  ZONES.forEach((z, i) => {
+    const x0 = bounds[i], x1 = bounds[i + 1];
+    g.fillStyle = `rgba(${z.color},${occupied.has(z.key) ? .28 : .1})`;
+    g.fillRect(x0, 0, x1 - x0, H);
+    const label = SLOTS[z.key].title;
+    const tw = g.measureText(label).width;
+    g.fillStyle = 'rgba(0,0,0,.6)';
+    g.fillRect((x0 + x1) / 2 - tw / 2 - 6, 8, tw + 12, 22);
+    g.fillStyle = `rgb(${z.color})`;
+    g.fillText(label, (x0 + x1) / 2 - tw / 2, 24);
+  });
+  g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 2; g.setLineDash([6, 6]);
+  [bounds[1], bounds[2]].forEach(x => { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); });
+  g.setLineDash([]);
+  if (track.floor < 100) {
+    const y = track.floor / 100 * H;
+    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, y, W, H - y);
+    g.fillStyle = 'rgba(255,255,255,.8)'; g.fillText('ignored', 10, y + 20);
+  }
+  track.people.forEach(p => {
+    const z = zoneOf(p), zone = ZONES.find(q => q.key === z);
+    g.strokeStyle = zone ? `rgb(${zone.color})` : 'rgba(255,255,255,.4)';
+    g.lineWidth = 3;
+    g.strokeRect(p.x * W, p.y * H, p.w * W, p.h * H);
+  });
+}
+
+function renderTrack() {
+  const btn = $('trackBtn');
+  btn.classList.toggle('on', track.on);
+  btn.firstChild.textContent = track.on ? 'On' : 'Off';
+  btn.setAttribute('aria-checked', track.on);
+
+  const paused = trackPausedBy();
+  const n = track.people.filter(zoneOf).length;
+  let view;
+  if (!track.src) view = ['help', 'Not set up', 'Click Adjust… and pick the platform camera.'];
+  else if (!track.on) view = ['pause', 'Off', track.offByPick ? 'Turned off when you picked a shot — turn on to follow again'
+                                                         : 'Turn on to switch shots by where people are'];
+  else if (track.error) view = ['help', 'Detector problem', track.error];
+  else if (!track.model) view = ['scan', 'Starting…', 'Loading the person detector (first time takes a few seconds)'];
+  else if (paused === 'media') view = ['image', 'Paused', 'JW Library media is on screen'];
+  else if (paused === 'holding') view = ['clock', 'Paused', 'Holding screen is on'];
+  else if (!track.want) view = ['scan', 'Nobody detected', 'Keeping the current shot'];
+  else view = [SLOTS[track.want].icon, SLOTS[track.want].title, `${n} ${n === 1 ? 'person' : 'people'} on platform`];
+
+  $('trackState').className = 'detect' + (track.on && track.want && !paused && track.model ? ' active' : '');
+  $('trackIco').innerHTML = icon(view[0]);
+  $('trackName').textContent = view[1];
+  $('trackHint').textContent = view[2];
+
+  $('splitAVal').textContent = track.splitA + '%';
+  $('splitBVal').textContent = track.splitB + '%';
+  $('floorVal').textContent = track.floor >= 100 ? 'off' : track.floor + '%';
+}
+
+function renderTrackRules() {
+  const rows = [['users', 'Left only', 'demo'], ['mic', 'Centre only', 'speaker'],
+                ['table', 'Right only', 'table'], ['wide', 'More than one area', 'wide']];
+  $('trackRules').innerHTML = rows.map(([ic, where]) => `${icon(ic)}<span>${where} → <b></b></span>`).join('');
+  $('trackRules').querySelectorAll('b').forEach((b, i) => { b.textContent = SLOTS[rows[i][2]].title; });
+}
+
+function setTrackSrc(name) {
+  track.src = name;
+  track.img = null; track.people = []; track.want = null;
+  store.set('trackSrc', name);
+  drawTrack(); renderTrack();
+}
+
+$('trackSrc').onchange = e => setTrackSrc(e.target.value);
+function setTrackOn(on) {
+  track.on = on;
+  track.offByPick = false; track.error = '';
+  store.set('trackOn', on ? '1' : '0');
+}
+$('trackBtn').onclick = () => { setTrackOn(!track.on); renderTrack(); };
+['splitA', 'splitB', 'floor'].forEach(id => {
+  const el = $(id);
+  el.value = track[id];
+  el.oninput = () => {
+    track[id] = +el.value;
+    if (track.splitA > track.splitB - 5) { // keep the centre zone at least 5% wide
+      if (id === 'splitA') track.splitB = track.splitA + 5; else track.splitA = track.splitB - 5;
+      $('splitA').value = track.splitA; $('splitB').value = track.splitB;
+    }
+    store.set('splitA', track.splitA); store.set('splitB', track.splitB); store.set('floor', track.floor);
+    drawTrack(); renderTrack();
+  };
+});
+
+let trackBusy = false;
+everyMs(1000, async () => {
+  if (!isMain || !connected || !track.on || !track.src || trackBusy) return;
+  trackBusy = true;
+  try {
+    if (!track.model) { renderTrack(); track.model = await loadModel(); }
+    const { imageData } = await call('GetSourceScreenshot', {
+      sourceName: track.src, imageFormat: 'jpg', imageWidth: 640, imageCompressionQuality: 70,
+    });
+    const img = await loadImage(imageData);
+    const found = await track.model.detect(img, 20, 0.5);
+    track.img = img;
+    track.people = found.filter(f => f.class === 'person').map(({ bbox: [x, y, w, h] }) =>
+      ({ x: x / img.width, y: y / img.height, w: w / img.width, h: h / img.height }));
+    track.error = '';
+    decideTrack();
+  } catch (err) {
+    track.error = track.model ? err.message
+      : LIB ? 'Could not load the person detector: ' + err.message
+      : 'Could not load the person detector — check the internet connection.';
+  } finally {
+    trackBusy = false;
+    if (!document.hidden) drawTrack();
+    renderTrack();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Meeting times, holding-screen countdown and auto-start.
+// While the holding scene is on air, its "Meeting countdown" text source shows the time left.
+// At the start time (if Auto-start is on) the camera is turned on and we cut to Platform wide.
+// ---------------------------------------------------------------------------
+const COUNTDOWN_INPUT = 'Meeting countdown';
+const sched = {
+  midDay: +store.get('midDay', 4), midTime: store.get('midTime', '19:00'),
+  weDay: +store.get('weDay', 0),   weTime: store.get('weTime', '10:00'),
+  holdText: store.get('holdText', 'Meeting starts in {time}'),
+  autoStart: store.get('autoStart', '1') === '1',
+  startedFor: 0, lastText: '',
+};
+
+// The next meeting, or the one in progress (until 2 hours after it started).
+function nextMeeting(now = new Date()) {
+  const found = [];
+  for (const [kind, day, time] of [['Midweek', sched.midDay, sched.midTime], ['Weekend', sched.weDay, sched.weTime]]) {
+    const [h, m] = time.split(':').map(Number);
+    for (let add = -1; add <= 7; add++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() + add);
+      d.setHours(h, m, 0, 0);
+      if (d.getDay() === day && d - now > -2 * 3600e3) found.push({ kind, at: d });
+    }
+  }
+  return found.sort((a, b) => a.at - b.at)[0];
+}
+
+function inMeetingWindow(now = new Date()) {
+  const m = nextMeeting(now);
+  return !!m && m.at - now <= 15 * 60e3;
+}
+
+function fmtLeft(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  const two = n => String(n).padStart(2, '0');
+  return h ? `${h}:${two(m)}:${two(s % 60)}` : `${m}:${two(s % 60)}`;
+}
+
+const fmtWhen = d => d.toLocaleDateString([], { weekday: 'long' }) + ' ' +
+                     d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function renderMeeting() {
+  const m = nextMeeting();
+  const btn = $('autoStartBtn');
+  btn.classList.toggle('on', sched.autoStart);
+  btn.setAttribute('aria-checked', sched.autoStart);
+  if (!m) return;
+  const left = m.at - Date.now();
+  $('nextKind').textContent = left > 0 ? `Next: ${m.kind} meeting` : `${m.kind} meeting`;
+  $('countdown').textContent = left > 0 ? (left < 86400e3 ? fmtLeft(left) : fmtWhen(m.at)) : 'In progress';
+  $('nextWhen').textContent = left > 0
+    ? `${fmtWhen(m.at)}${sched.autoStart ? ' · auto-start on' : ''}`
+    : `Started ${fmtWhen(m.at)}`;
+}
+
+everyMs(1000, () => {
+  renderMeeting();
+  if (!isMain || !connected) return;
+  const m = nextMeeting();
+  const { bySlot } = layout();
+  if (!m || !bySlot.holding || state.current !== bySlot.holding) return;
+  const left = m.at - Date.now();
+  const text = left > 0 ? sched.holdText.replace('{time}', fmtLeft(left)) : '';
+  if (text !== sched.lastText) {
+    sched.lastText = text;
+    call('SetInputSettings', { inputName: COUNTDOWN_INPUT, inputSettings: { text } }).catch(() => {});
+  }
+  if (sched.autoStart && left <= 0 && left > -5 * 60e3 && sched.startedFor !== +m.at) {
+    sched.startedFor = +m.at;
+    if (!state.camOn) call('StartVirtualCam').catch(showError);
+    const target = bySlot.wide || bySlot.speaker;
+    if (target) switchScene(target);
+  }
+});
+
+// Builds a simple holding scene: dark background, "Welcome" and the countdown text.
+// Add the yeartext or a picture to it in OBS if you like.
+async function createHolding() {
+  const sceneName = 'Holding screen';
+  const { inputKinds } = await call('GetInputKindList');
+  const pick = re => inputKinds.filter(k => re.test(k)).sort().pop();
+  const textKind = pick(/^text_gdiplus/) || pick(/^text_ft2/);
+  const colorKind = pick(/^color_source/);
+  const { baseWidth: W, baseHeight: H } = await call('GetVideoSettings');
+  await call('CreateScene', { sceneName });
+  const add = async (inputName, inputKind, inputSettings, y) => {
+    const { sceneItemId } = await call('CreateInput', { sceneName, inputName, inputKind, inputSettings });
+    if (y != null) await call('SetSceneItemTransform', {
+      sceneName, sceneItemId, sceneItemTransform: { positionX: W / 2, positionY: y, alignment: 0 },
+    });
+  };
+  const text = (size, value) => ({
+    text: value, font: { face: 'Segoe UI', size: Math.round(size * H / 1080), style: 'Bold', flags: 1 },
+    color: 0xFFFFFF, color1: 0xFFFFFFFF, color2: 0xFFFFFFFF, align: 'center', valign: 'center',
+  });
+  if (colorKind) await add('Holding background', colorKind, { color: 0xFF3A2012, width: W, height: H });
+  if (textKind) {
+    await add('Holding title', textKind, text(120, 'Welcome'), H * 0.4);
+    await add(COUNTDOWN_INPUT, textKind, text(72, ''), H * 0.58);
+  }
+  sched.lastText = null;
+  return sceneName;
+}
+
+async function showHolding() {
+  try {
+    switchScene(layout().bySlot.holding || await createHolding());   // Follow people pauses on its own here
+  } catch (err) { showError(err); }
+}
+$('holdBtn').onclick = showHolding;
+
+// The app opens on the holding screen - unless a meeting is under way, so the page reloading
+// mid-meeting doesn't cut away from it.
+let holdOnStart = inApp;
+function holdingOnStart() {
+  if (!holdOnStart) return;
+  holdOnStart = false;
+  const m = nextMeeting();
+  if (!(m && m.at <= Date.now())) showHolding();
+}
+$('autoStartBtn').onclick = () => {
+  sched.autoStart = !sched.autoStart;
+  store.set('autoStart', sched.autoStart ? '1' : '0');
+  renderMeeting();
+  shareTimes();
+};
+['midDay', 'weDay'].forEach(id => {
+  const sel = $(id);
+  for (let i = 0; i < 7; i++) {
+    const o = document.createElement('option');
+    o.value = i;
+    o.textContent = new Date(2024, 0, 7 + i).toLocaleDateString([], { weekday: 'long' }); // 7 Jan 2024 = Sunday
+    sel.appendChild(o);
+  }
+  sel.value = sched[id];
+  sel.onchange = () => { sched[id] = +sel.value; store.set(id, sel.value); renderMeeting(); shareTimes(); };
+});
+['midTime', 'weTime', 'holdText'].forEach(id => {
+  const el = $(id);
+  el.value = sched[id];
+  el.onchange = () => {
+    if (!el.value) return;
+    sched[id] = el.value; store.set(id, el.value); sched.lastText = null;
+    renderMeeting();
+    shareTimes();
+  };
+});
+
+// The times are kept in OBS (with its profile), so the PC and every tablet show the same ones.
+// A change is sent straight to the others; anyone connecting later reads them from OBS.
+const TIMES_SLOT = { realm: 'OBS_WEBSOCKET_DATA_REALM_PROFILE', slotName: 'meetingCamera.times' };
+const TIME_KEYS = ['midDay', 'midTime', 'weDay', 'weTime', 'holdText', 'autoStart'];
+
+function shareTimes() {
+  if (!connected) return;
+  const slotValue = Object.fromEntries(TIME_KEYS.map(k => [k, sched[k]]));
+  call('SetPersistentData', { ...TIMES_SLOT, slotValue }).catch(() => {});
+  call('BroadcastCustomEvent', { eventData: { meetingCameraTimes: slotValue } }).catch(() => {});
+}
+
+function applyTimes(t) {
+  for (const k of TIME_KEYS) {
+    if (t[k] == null || t[k] === '') continue;
+    sched[k] = k === 'autoStart' ? !!t[k] : k.endsWith('Day') ? +t[k] : String(t[k]);
+    store.set(k, k === 'autoStart' ? (sched[k] ? '1' : '0') : sched[k]);
+    if (k !== 'autoStart') $(k).value = sched[k];
+  }
+  sched.lastText = null;
+  renderMeeting();
+}
+
+// Nothing in OBS yet: the main PC's times become everyone's.
+async function loadTimes() {
+  const { slotValue } = await call('GetPersistentData', TIMES_SLOT);
+  if (slotValue) applyTimes(slotValue);
+  else if (isMain) shareTimes();
+}
+
+// ---------------------------------------------------------------------------
+// Pre-meeting check: one list of everything that's ready or needs fixing.
+// ---------------------------------------------------------------------------
+async function runCheck() {
+  if (!$('checkDlg').open) $('checkDlg').showModal();
+  $('checks').innerHTML = '<div class="empty">Checking…</div>';
+  const rows = [];
+  const add = (level, text, sub = '', fix = null) => rows.push({ level, text, sub, fix });
+
+  if (!connected) {
+    add('bad', 'Not connected to OBS', 'Is OBS open? The connection details are under Settings.');
+    return renderCheck(rows);
+  }
+  add('ok', 'Connected to OBS');
+  const [cam, stats, inputs] = await Promise.all([call('GetVirtualCamStatus'), call('GetStats'), call('GetInputList')]);
+  if (cam.outputActive) add('ok', 'Virtual camera is on');
+  else add('bad', 'Virtual camera is off', 'Zoom gets no video until it’s on.', ['Start camera', () => call('StartVirtualCam')]);
+
+  const { bySlot } = layout();
+  for (const [key, slot] of Object.entries(SLOTS)) {
+    const scene = bySlot[key];
+    if (!scene) {
+      if (key === 'holding') add('warn', 'No holding screen', 'Needed for the countdown.', ['Create it', createHolding]);
+      else add('bad', `${slot.title}: no scene found`, 'Add a scene with this name in OBS.');
+      continue;
+    }
+    if ((key === 'monitor' || key === 'spkmon') && scene !== state.current) {
+      add('ok', slot.title, `Scene “${scene}” (OBS only shows a screen capture while it’s on air)`);
+      continue;
+    }
+    let g = null;
+    try { g = await grayOf(scene); } catch {}
+    if (!g) add('warn', `${slot.title}: couldn’t get a picture`, `Scene “${scene}”`);
+    else if (isDark(g)) {
+      const screen = key === 'monitor' || key === 'spkmon';
+      add(screen ? 'warn' : 'bad', `${slot.title}: picture is black`,
+          screen ? 'Is JW Library showing on the second display?' : 'Is the camera switched on and plugged in?');
+    }
+    else add('ok', slot.title, `Scene “${scene}” has a picture`);
+  }
+  if (bySlot.holding && !inputs.inputs.some(i => i.inputName === COUNTDOWN_INPUT)) {
+    add('warn', `Holding screen has no “${COUNTDOWN_INPUT}” text`,
+        `Add a Text source with exactly this name to show the countdown.`);
+  }
+
+  const m = nextMeeting();
+  if (!m) add('warn', 'No meeting time set', 'Set the times under Settings.');
+  else add('ok', `${m.kind} meeting ${fmtWhen(m.at)}`,
+           m.at > Date.now() ? `Starts in ${fmtLeft(m.at - Date.now())}${sched.autoStart ? ' · auto-start on' : ' · auto-start off'}` : 'In progress');
+
+  if (inApp) {
+    // OBS's screen captures should show the screen JW Library fills (with several screens it's easy
+    // to pick the wrong one). OBS names each screen with its size and position, e.g. "…: 1920x1080 @ -2322,-1218".
+    try {
+      const { screen } = await appFetch('/jw/info');
+      for (const input of inputs.inputs.filter(i => i.inputKind === 'monitor_capture')) {
+        if (!screen) break;
+        const [{ inputSettings }, { propertyItems }] = await Promise.all([
+          call('GetInputSettings', { inputName: input.inputName }),
+          call('GetInputPropertiesListPropertyItems', { inputName: input.inputName, propertyName: 'monitor_id' }),
+        ]);
+        const jwItem = propertyItems.find(it => it.itemName.includes(`${screen.w}x${screen.h} @ ${screen.x},${screen.y}`));
+        if (!jwItem || jwItem.itemValue === inputSettings.monitor_id) continue;
+        add('bad', `OBS “${input.inputName}” shows a different screen from JW Library`,
+            `JW Library shows media on ${jwItem.itemName.split(':')[0] || 'another screen'}.`,
+            ['Use JW Library’s screen', () => call('SetInputSettings', { inputName: input.inputName, inputSettings: { monitor_id: jwItem.itemValue } })]);
+      }
+    } catch {}
+    try {
+      const g = await toGray(await jwScreen(DET.w, DET.h));
+      if (isDark(g)) add('warn', 'JW Library’s second display is black', 'It normally shows the yeartext.');
+      else add('ok', 'JW Library’s second display is on');
+    } catch { add('bad', 'JW Library’s second display is off', 'Turn it on in JW Library’s Settings.'); }
+  }
+  if (isMain) {
+    if (!auto.on) add('warn', 'JW Library auto-switch is off', '', ['Turn on', () => { if (!auto.on) toggleAuto(); }]);
+    else if (!auto.mediaSrc) add('bad', 'JW Library auto-switch: no display source picked', 'Settings → JW Library.',
+                                 ['Open', () => { $('checkDlg').close(); openSettings('jw'); }]);
+    else if (!auto.idleRef) add('warn', 'JW Library auto-switch: idle screen not saved',
+                                'With the yeartext showing, Settings → JW Library → Save idle screen.',
+                                ['Open', () => { $('checkDlg').close(); openSettings('jw'); }]);
+    else add('ok', 'JW Library auto-switch ready', `Watching “${auto.mediaSrc}”`);
+    if (track.on) {
+      if (!track.src) add('bad', 'People tracking: no camera picked', 'Settings → Follow people.');
+      else add(track.error ? 'warn' : 'ok', 'People tracking on', track.error || `Watching “${track.src}”`);
+    }
+  }
+
+  const cpu = Math.round(stats.cpuUsage);
+  add(cpu > 80 ? 'warn' : 'ok', `OBS is using ${cpu}% CPU`, `${Math.round(stats.activeFps)} frames per second`);
+  renderCheck(rows);
+}
+
+function renderCheck(rows) {
+  const box = $('checks');
+  box.innerHTML = '';
+  const bad = rows.filter(r => r.level !== 'ok').length;
+  const head = document.createElement('div');
+  head.className = 'check ' + (bad ? 'warn' : 'ok');
+  head.innerHTML = icon(bad ? 'alert' : 'check') + '<div class="text"><b></b></div>';
+  head.querySelector('b').textContent = bad ? `${bad} thing${bad > 1 ? 's' : ''} to look at` : 'Everything looks ready';
+  box.appendChild(head);
+  rows.forEach(r => {
+    const d = document.createElement('div');
+    d.className = 'check ' + r.level;
+    d.innerHTML = icon(r.level === 'ok' ? 'check' : 'alert') + '<div class="text"><div></div><div class="sub"></div></div>';
+    d.querySelector('.text div').textContent = r.text;
+    d.querySelector('.sub').textContent = r.sub;
+    if (r.fix) {
+      const b = document.createElement('button');
+      b.textContent = r.fix[0];
+      b.onclick = async () => {
+        try { await r.fix[1](); } catch (err) { showError(err); }
+        if ($('checkDlg').open) setTimeout(runCheck, 800);
+      };
+      d.appendChild(b);
+    }
+    box.appendChild(d);
+  });
+}
+
+$('checkBtn').onclick = () => runCheck().catch(showError);
+$('recheckBtn').onclick = () => runCheck().catch(showError);
+
+// ---------------------------------------------------------------------------
+// Problem alerts: a red banner (and a beep) when something breaks during a meeting.
+// Runs from the worker timer, so it keeps watching while Zoom is in front.
+// ---------------------------------------------------------------------------
+const alerts = new Map();   // key -> { text, fix, dismissed, lastBeep }
+let audioCtx = null;
+// Browsers only allow sound after the page has been clicked once.
+document.addEventListener('pointerdown', () => {
+  try { audioCtx ??= new AudioContext(); audioCtx.resume(); } catch {}
+});
+
+function beep() {
+  if (!audioCtx) return;
+  [0, 0.25].forEach(t => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880;
+    g.gain.value = 0.15;
+    o.connect(g).connect(audioCtx.destination);
+    o.start(audioCtx.currentTime + t);
+    o.stop(audioCtx.currentTime + t + 0.15);
+  });
+}
+
+function setAlert(key, active, text, fix = null) {
+  const a = alerts.get(key);
+  if (!active) { if (a) { alerts.delete(key); renderAlerts(); } return; }
+  if (a) { if (a.text !== text) { a.text = text; renderAlerts(); } return; }
+  alerts.set(key, { text, fix, dismissed: false, lastBeep: 0 });
+  renderAlerts();
+}
+
+function renderAlerts() {
+  const box = $('alerts');
+  box.innerHTML = '';
+  for (const a of alerts.values()) {
+    const d = document.createElement('div');
+    d.className = 'alert' + (a.dismissed ? ' quiet' : '');
+    d.innerHTML = icon('alert') + '<span class="text"></span>';
+    d.querySelector('.text').textContent = a.text;
+    if (a.fix) {
+      const b = document.createElement('button');
+      b.textContent = a.fix[0];
+      b.onclick = () => Promise.resolve().then(a.fix[1]).catch(showError);
+      d.appendChild(b);
+    }
+    if (!a.dismissed) {
+      const x = document.createElement('button');
+      x.innerHTML = icon('x');
+      x.title = 'Silence this alert';
+      x.onclick = () => { a.dismissed = true; renderAlerts(); };
+      d.appendChild(x);
+    }
+    box.appendChild(d);
+  }
+  box.hidden = !alerts.size;
+  document.title = alerts.size ? `⚠ ${alerts.size} problem${alerts.size > 1 ? 's' : ''} — Meeting Camera` : 'Meeting Camera';
+}
+
+const mon = { scene: null, prev: null, frozen: 0, dark: 0, stats: null, slow: 0 };
+let monBusy = false;
+everyMs(2000, async () => {
+  const meeting = inMeetingWindow();
+  setAlert('obs', !connected && state.wasConnected && (meeting || state.camOn), 'Lost connection to OBS — is it still running?');
+  if (connected) {
+    setAlert('cam', meeting && !state.camOn, 'Virtual camera is OFF — Zoom isn’t getting any video',
+             ['Start camera', () => call('StartVirtualCam')]);
+  }
+  if (connected && state.camOn && state.current && !monBusy) {
+    monBusy = true;
+    try {
+      const scene = state.current;
+      const g = await grayOf(scene, 160, 90);
+      if (scene !== mon.scene) Object.assign(mon, { scene, prev: null, frozen: 0, dark: 0 });
+      // A live camera never gives two bit-identical frames; a stuck source does.
+      mon.frozen = mon.prev && g.every((v, i) => v === mon.prev[i]) ? mon.frozen + 1 : 0;
+      mon.dark = isDark(g) ? mon.dark + 1 : 0;
+      mon.prev = g;
+
+      const slot = Object.keys(SLOTS).find(k => layout().bySlot[k] === scene);
+      const title = slot ? SLOTS[slot].title : scene;
+      const camera = ['demo', 'wide', 'table', 'speaker'].includes(slot);
+      setAlert('dark', mon.dark >= 3 && slot !== 'holding', `${title} is showing a black picture`);
+      setAlert('frozen', camera && mon.frozen >= 8, `${title} picture looks frozen — check the camera`);
+
+      const st = await call('GetStats');
+      if (mon.stats) {
+        const ratio = (skip, total) => {
+          const t = st[total] - mon.stats[total];
+          return t > 0 ? (st[skip] - mon.stats[skip]) / t : 0;
+        };
+        const dropping = ratio('renderSkippedFrames', 'renderTotalFrames') > 0.05 ||
+                         ratio('outputSkippedFrames', 'outputTotalFrames') > 0.05;
+        mon.slow = dropping ? mon.slow + 1 : 0;
+        setAlert('perf', mon.slow >= 2, 'OBS is dropping frames — the computer is overloaded (close other programs)');
+      }
+      mon.stats = st;
+    } catch {} finally { monBusy = false; }
+  } else if (!state.camOn) {
+    ['dark', 'frozen', 'perf'].forEach(k => setAlert(k, false));
+  }
+
+  for (const a of alerts.values()) {
+    if (!a.dismissed && Date.now() - a.lastBeep > 60000) { a.lastBeep = Date.now(); beep(); break; }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Tablet remote: MeetingCamera.exe serves this page on the hall network. On the main PC
+// we show its address as a QR code that also carries the OBS connection details.
+// ---------------------------------------------------------------------------
+async function renderRemoteBox() {
+  const box = $('remoteBox');
+  if (!isMain) return;
+  box.innerHTML = '<div class="remote" id="remote"><span class="empty">Looking for the tablet server…</span></div>';
+  let info;
+  try { info = await (await fetch(inApp ? '/info' : `http://localhost:${REMOTE_PORT}/info`)).json(); }
+  catch {
+    $('remote').innerHTML = '<span class="empty">The tablet remote isn’t running. Open Meeting Camera from its desktop icon, ' +
+                            'or double-click Serve-Remote.bat.</span>';
+    return;
+  }
+  const ip = (info.ips || [])[0];
+  if (!ip) { $('remote').innerHTML = '<span class="empty">This PC isn’t on a network, so a tablet can’t reach it.</span>'; return; }
+  const link = `http://${ip}:${REMOTE_PORT}/`;
+  const full = link + '#' + new URLSearchParams({ host: ip, port: $('port').value || '4455', pw: $('password').value });
+  $('remote').innerHTML = `<div class="qr" id="qr"></div>
+    <div><b>Connect a tablet or phone</b>
+      <ol><li>Join the same Wi-Fi as this PC.</li><li>Point its camera at this code and open the link.</li>
+          <li>Tip: add it to the home screen to open it with one tap next time.</li></ol>
+      <div class="help">No camera? Type this address instead: <a target="_blank"></a></div>
+      <div class="help">The code includes the OBS password, so the tablet connects by itself.
+        Windows may ask once whether OBS and Meeting Camera can use the network — allow “Private networks”.</div></div>`;
+  const a = $('remote').querySelector('a');
+  a.href = full; a.textContent = link;
+  try {
+    await loadScript(LIB ? LIB + 'qrcode.min.js' : 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
+    new QRCode($('qr'), { text: full, width: 200, height: 200 });
+  } catch { $('qr').remove(); }
+}
+
+// ---------------------------------------------------------------------------
+// Settings dialog, with a tab for each part.
+// ---------------------------------------------------------------------------
+let settingsTab = 'connection';
+function openSettings(tab = settingsTab) {
+  settingsTab = tab;
+  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab));
+  document.querySelectorAll('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== tab; });
+  if (!$('settingsDlg').open) $('settingsDlg').showModal();
+  if (tab === 'tablet') renderRemoteBox();
+  if (tab === 'track') drawTrack();
+}
+document.querySelectorAll('#tabs button').forEach(b => { b.onclick = () => openSettings(b.dataset.tab); });
+document.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => openSettings(b.dataset.open); });
+document.querySelectorAll('.dlgClose').forEach(b => { b.onclick = () => b.closest('dialog').close(); });
+
+// ---------------------------------------------------------------------------
+// Setup progress from MeetingCamera.exe (it runs Start-Meeting.ps1 and passes on what it prints).
+// ---------------------------------------------------------------------------
+const setup = { seen: '', hidden: false, meeting: '', wasRunning: false, doneAt: 0 };
+
+function renderSetup({ running, lines }) {
+  const key = running + lines.join('\n');
+  if (key === setup.seen) return;
+  setup.seen = key;
+  if (running && !setup.wasRunning) setup.hidden = false;   // a new run always shows
+  setup.wasRunning = running;
+  if (!lines.length && !running) return;
+
+  const steps = [], notes = [];
+  for (const line of lines) {
+    const m = line.match(/^\s*(.+?)\s+\[(ok|!!)\]\s*(.*)$/);
+    const head = line.match(/Getting ready for the (\w+) meeting/);
+    if (head) setup.meeting = head[1];
+    else if (/^\s*(All set|Finished with)/.test(line)) continue;   // the summary; the title says it
+    else if (m && m[1] === 'Error' && steps.at(-1)?.name === 'Error') steps.at(-1).detail += ' ' + m[3];   // one row per error
+    else if (m) steps.push({ ok: m[2] === 'ok', name: m[1], detail: m[3] });
+    else notes.push(line.trim());
+  }
+  const problems = steps.filter(s => !s.ok).length;
+  const title = running ? `Getting ready${setup.meeting ? ` for the ${setup.meeting} meeting` : ''}…`
+              : problems ? `${problems} thing${problems > 1 ? 's' : ''} to sort out before the ${setup.meeting || ''} meeting`
+              : `Ready for the ${setup.meeting} meeting`;
+  $('setupTitle').innerHTML = icon(running ? 'wand' : problems ? 'alert' : 'check') + '<span></span>';
+  $('setupTitle').lastChild.textContent = title;
+  $('setupAgain').hidden = running;
+
+  const box = $('setupSteps');
+  box.innerHTML = '';
+  const row = (cls, ic, name, detail) => {
+    const d = document.createElement('div');
+    d.className = 'check ' + cls;
+    d.innerHTML = (ic ? icon(ic) : '<span class="spin"></span>') + '<div class="text"><div></div><div class="sub"></div></div>';
+    d.querySelector('.text div').textContent = name;
+    d.querySelector('.sub').textContent = detail;
+    box.appendChild(d);
+  };
+  // Once finished, only what needs attention (the window may be small); the rest is one line.
+  const shown = running ? steps : steps.filter(st => !st.ok);
+  shown.forEach(st => row(st.ok ? 'ok' : 'bad', st.ok ? 'check' : 'alert', st.name, st.detail));
+  const done = steps.length - shown.length;
+  if (!running && done) row('ok', 'check', `${done} other step${done > 1 ? 's' : ''} done`, steps.filter(st => st.ok).map(st => st.name).join(' · '));
+  if (running) row('', null, 'Working…', '');
+  notes.forEach(n => row('warn', 'help', n, ''));
+
+  // All fine: show the tick for a few seconds, then get out of the way.
+  if (!running && !problems) setTimeout(() => { if (!setup.wasRunning) { setup.hidden = true; $('setupCard').hidden = true; } }, 6000);
+  $('setupCard').hidden = setup.hidden;
+}
+
+$('setupAgain').onclick = () => appFetch('/setup/run').then(renderSetup).catch(showError);
+$('setupClose').onclick = () => { setup.hidden = true; $('setupCard').hidden = true; };
+
+if (inApp) {
+  setInterval(() => appFetch('/setup').then(renderSetup).catch(() => {}), 1000);
+  // Tell the app this window is open; closing the last one quits the app (a reload comes straight back).
+  const windowId = Math.random().toString(36).slice(2);
+  appFetch('/hello?id=' + windowId).catch(() => {});
+  addEventListener('pagehide', () => fetch('/bye?id=' + windowId, { keepalive: true, headers: { 'X-Meeting-Camera': '1' } }));
+}
+
+// ---------------------------------------------------------------------------
+
+$('camBtn').onclick = toggleCam;
+$('settingsForm').onsubmit = e => { e.preventDefault(); connect(true); };
+
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT'].includes(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey || !connected) return;
+  if (e.key === 'v' || e.key === 'V') { toggleCam(); return; }
+  if (e.key === 'a' || e.key === 'A') { toggleAuto(); return; }
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && state.order[n - 1]) manualSwitch(state.order[n - 1]);
+});
+
+// The tablet link from the QR code carries the connection details: #host=…&port=…&pw=…
+const fromLink = new URLSearchParams(location.hash.slice(1));
+if (fromLink.has('host')) {
+  store.set('host', fromLink.get('host'));
+  store.set('port', fromLink.get('port') || '4455');
+  store.set('password', fromLink.get('pw') || '');
+}
+if (!isMain) {
+  $('jwPanel').hidden = $('trackPanel').hidden = $('autoStartBtn').hidden = $('tabletBtn').hidden = true;
+  document.querySelectorAll('.mainOnly').forEach(el => { el.hidden = true; });
+  $('remoteNote').hidden = false;
+}
+// A tablet finds OBS on the PC that served it the page, even if that PC's address has changed
+// since the tablet last connected (say, from Wi-Fi to a cable).
+$('host').value = isMain ? store.get('host', 'localhost') : location.hostname;
+$('port').value = store.get('port', '4455');
+$('password').value = store.get('password', '');
+setGridMode(gridMode);
+setCam(false);
+renderMeeting();
+renderDetect();
+renderRules({});
+renderTrackRules();
+renderTrack();
+drawTrack();
+connect();
+</script>
+</body>
+</html>
