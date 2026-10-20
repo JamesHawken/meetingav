@@ -7,6 +7,7 @@
 //   - Tells the page OBS's websocket port and password, so nobody has to type them
 //   - Sets the volume of the speakers, Zoom and JW Library (a small mixer in the page)
 //   - Keeps a timer for each part and shows it big on a screen the speakers can see (like OnlyT)
+//   - Starts with Windows, and updates itself from the GitHub repository (Settings > App)
 //   - Shows the page what JW Library's second display is showing (OBS only captures a screen
 //     while its scene is on air, so it can't be used to spot media starting)
 // Closing the Meeting AV window quits the app.
@@ -77,6 +78,11 @@ static class MeetingAV
     {
         // Real pixel sizes on every screen, even when they use different scaling.
         try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
+        // Restarting to update: wait for the copy that's closing to be gone (it holds the port).
+        for (int i = 0; i + 1 < args.Length; i++)
+            if (args[i].TrimStart('-', '/').ToLowerInvariant() == "after")
+                try { Process.GetProcessById(int.Parse(args[i + 1])).WaitForExit(15000); } catch { }
+        if (ApplyUpdate(args)) return 0;
         UnpackWebView2();
         bool setup = true;
         foreach (string arg in args)
@@ -92,7 +98,7 @@ static class MeetingAV
 
         // Already running: just show its window.
         bool first;
-        Mutex single = new Mutex(true, @"Local\MeetingAV", out first);
+        Single = new Mutex(true, @"Local\MeetingAV", out first);
         if (!first)
         {
             int.TryParse(File.Exists(portFile) ? File.ReadAllText(portFile) : "", out Port);
@@ -134,13 +140,17 @@ static class MeetingAV
         QuitTimer.Tick += (s, e) => { if (OpenWindows.Count == 0) Quit(); };
 
         MakeDesktopShortcut();
+        StartWithWindowsFirstTime();
+        CheckForUpdate(false);
         OpenWindow();
         ShowTimerScreen("auto", true);   // where it was last time, if that screen is still there
         if (setup) RunSetup(SetupMeeting);
         Application.Run();
-        GC.KeepAlive(single);
+        GC.KeepAlive(Single);
         return 0;
     }
+
+    static Mutex Single;   // only one copy runs
 
     static void Quit()
     {
@@ -552,6 +562,127 @@ static class MeetingAV
         return (T)UiThread.Invoke(f);
     }
 
+    // ---- Starting with Windows ----------------------------------------------------------
+    // On by default (the first time this version runs), switched in Settings > App.
+
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+    static bool StartsWithWindows()
+    {
+        using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey))
+            return k != null && k.GetValue("MeetingAV") != null;
+    }
+
+    static void SetStartsWithWindows(bool on)
+    {
+        using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey))
+        {
+            if (on) k.SetValue("MeetingAV", "\"" + Application.ExecutablePath + "\"");
+            else k.DeleteValue("MeetingAV", false);
+        }
+    }
+
+    static void StartWithWindowsFirstTime()
+    {
+        string flag = Path.Combine(DataDir, "startup-set");
+        try
+        {
+            if (!File.Exists(flag)) { SetStartsWithWindows(true); File.WriteAllText(flag, "on by default"); }
+            else if (StartsWithWindows()) SetStartsWithWindows(true);   // keep the path right if the exe moved
+        }
+        catch { }
+    }
+
+    // ---- Updates ------------------------------------------------------------------------
+    // New versions are MeetingAV.exe committed to the GitHub repository. At start-up the latest
+    // commit of it is compared with this file: only a newer one is fetched (so a build that's newer
+    // than GitHub's is never replaced), checked against GitHub's own fingerprint of the file, and
+    // kept as MeetingAV.new.exe. Restarting puts it in place.
+
+    const string Repo = "JamesHawken/meetingav";
+    static volatile string UpdateState = "";   // "", checking, ready, up to date, or what went wrong
+    static string NewExe { get { return Path.Combine(AppDir, "MeetingAV.new.exe"); } }
+    static string NoUpdatesFile { get { return Path.Combine(DataDir, "no-updates"); } }
+
+    static void CheckForUpdate(bool asked)
+    {
+        if (!asked && File.Exists(NoUpdatesFile)) return;
+        if (UpdateState == "checking" || UpdateState == "ready") return;
+        UpdateState = "checking";
+        new Thread(() =>
+        {
+            try
+            {
+                string commits = Download("https://api.github.com/repos/" + Repo + "/commits?path=MeetingAV.exe&per_page=1");
+                Match date = Regex.Match(commits, "\"committer\"\\s*:\\s*\\{[^}]*?\"date\"\\s*:\\s*\"([^\"]+)\"");
+                if (!date.Success) throw new Exception("no version found on GitHub");
+                DateTime committed = DateTime.Parse(date.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+                byte[] mine = File.ReadAllBytes(Application.ExecutablePath);
+                if (committed <= File.GetLastWriteTimeUtc(Application.ExecutablePath)) { UpdateState = "up to date"; return; }
+                string meta = Download("https://api.github.com/repos/" + Repo + "/contents/MeetingAV.exe");
+                string sha = Regex.Match(meta, "\"sha\"\\s*:\\s*\"([0-9a-f]{40})\"").Groups[1].Value;
+                if (sha == "" ) throw new Exception("GitHub didn't say which version it has");
+                if (sha == GitBlobSha(mine)) { UpdateState = "up to date"; return; }
+                byte[] exe = DownloadBytes("https://raw.githubusercontent.com/" + Repo + "/main/MeetingAV.exe");
+                if (GitBlobSha(exe) != sha) throw new Exception("the download didn't match GitHub's copy");
+                File.WriteAllBytes(NewExe, exe);
+                UpdateState = "ready";
+            }
+            catch (Exception e) { UpdateState = "Couldn't check for updates: " + e.Message; }
+        }) { IsBackground = true }.Start();
+    }
+
+    // How git names a file's contents (what GitHub reports as its "sha").
+    static string GitBlobSha(byte[] data)
+    {
+        using (System.Security.Cryptography.SHA1 sha = System.Security.Cryptography.SHA1.Create())
+        {
+            byte[] head = Encoding.ASCII.GetBytes("blob " + data.Length + "\0");
+            sha.TransformBlock(head, 0, head.Length, null, 0);
+            sha.TransformFinalBlock(data, 0, data.Length);
+            return BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+        }
+    }
+
+    // A downloaded update goes in place before anything else starts: this file moves aside (allowed
+    // while it runs), the new one takes its name and starts instead. Returns true if it did.
+    static bool ApplyUpdate(string[] args)
+    {
+        string self = Application.ExecutablePath, old = Path.Combine(AppDir, "MeetingAV.old.exe");
+        try { if (File.Exists(old)) File.Delete(old); } catch { }   // left from the last update
+        if (!File.Exists(NewExe) || !string.Equals(Path.GetFileName(self), "MeetingAV.exe", StringComparison.OrdinalIgnoreCase)) return false;
+        try
+        {
+            File.Move(self, old);
+            File.Move(NewExe, self);
+            Process.Start(self, string.Join(" ", args));
+            return true;
+        }
+        catch
+        {
+            try { if (!File.Exists(self) && File.Exists(old)) File.Move(old, self); } catch { }
+            return false;
+        }
+    }
+
+    // Restart now (to update): the new copy waits for this one to close, then starts without setup.
+    static void Restart()
+    {
+        Tray.Visible = false;
+        try { Single.ReleaseMutex(); Single.Close(); } catch { }
+        Process.Start(Application.ExecutablePath, "-NoSetup -after " + Process.GetCurrentProcess().Id);
+        Environment.Exit(0);
+    }
+
+    static string AppJson()
+    {
+        return "{\"startup\":" + (StartsWithWindows() ? "true" : "false") +
+               ",\"updates\":" + (File.Exists(NoUpdatesFile) ? "false" : "true") +
+               ",\"installed\":" + Json(File.GetLastWriteTime(Application.ExecutablePath).ToString("d MMM yyyy, HH:mm", System.Globalization.CultureInfo.InvariantCulture)) +
+               ",\"update\":" + Json(UpdateState) + "}";
+    }
+
     // ---- Meeting parts, for the timer ------------------------------------------------
     // A midweek meeting's parts and their lengths come from that week's Life and Ministry Meeting
     // Workbook on wol.jw.org, as OnlyT does. Kept once fetched, so it also works offline at the hall.
@@ -621,6 +752,20 @@ static class MeetingAV
     {
         string t = WebUtility.HtmlDecode(Regex.Replace(html, "<[^>]+>", ""));
         return Regex.Replace(t.Replace("\u200b", ""), "\\s+", " ").Trim();
+    }
+
+    static byte[] DownloadBytes(string url)
+    {
+        ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+        HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+        req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MeetingAV";
+        req.Timeout = 120000;
+        using (WebResponse resp = req.GetResponse())
+        using (MemoryStream m = new MemoryStream())
+        {
+            resp.GetResponseStream().CopyTo(m);
+            return m.ToArray();
+        }
     }
 
     static string Download(string url)
@@ -1142,6 +1287,29 @@ static class MeetingAV
                 Match m = Regex.Match(query, "meeting=(Midweek|Weekend)");
                 RunSetup(m.Success ? m.Groups[1].Value : null);
                 SendJson(stream, SetupJson());
+            }
+            else if (path == "/app" && local)
+                SendJson(stream, AppJson());
+            else if (path == "/app/set" && local)
+            {
+                Match st = Regex.Match(query, "startup=([01])"), up = Regex.Match(query, "updates=([01])");
+                try
+                {
+                    if (st.Success) SetStartsWithWindows(st.Groups[1].Value == "1");
+                    if (up.Success) { if (up.Groups[1].Value == "1") File.Delete(NoUpdatesFile); else File.WriteAllText(NoUpdatesFile, "off"); }
+                }
+                catch { }
+                SendJson(stream, AppJson());
+            }
+            else if (path == "/app/check" && local)
+            {
+                CheckForUpdate(true);
+                SendJson(stream, AppJson());
+            }
+            else if (path == "/app/restart" && local)
+            {
+                SendJson(stream, "{}");
+                UiThread.BeginInvoke((Action)Restart);
             }
             else if (path == "/timer" && local)
                 SendJson(stream, TimerJson());

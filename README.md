@@ -20,7 +20,13 @@ video, and run it all from a tablet.
    open) and starts OBS minimised by the clock, with the virtual camera on.
 3. Open JW Library and Zoom yourself.
 
-Meeting AV opens on the holding screen, with a countdown to the meeting.
+Meeting AV opens on the holding screen, with a countdown to the meeting. It
+starts with Windows and keeps itself up to date from this repository: when a
+newer `MeetingAV.exe` is committed, it downloads it and a **Restart to update**
+button appears (both can be switched off under Settings → App).
+
+It opens in **Simple** mode: the timer, the picture and the shots. Everything
+automatic keeps running; **More** shows the rest (sound, settings, checks).
 
 ## OBS scenes
 
@@ -46,11 +52,12 @@ Meeting AV makes one.
   *Follow people* off until you switch it back on.
 - **Start camera:** turns on the OBS virtual camera (what Zoom sees); the button
   only shows while it's off. `V` turns it on or off.
-- **JW Library media:** a picture cuts to *Speaker + Monitor*, a video or song
-  to *Monitor*, and closing it goes back to the previous shot. `A` turns this
-  on or off.
-- **Follow people:** switches between Demonstrations, Speaker, Table and
-  Platform wide depending on where people stand on the platform. With a Reader
+- **Auto media** (a tick on the shots): a JW Library picture cuts to
+  *Speaker + Monitor*, a video or song to *Monitor*, and closing it goes back to
+  the previous shot. `A` ticks or unticks it.
+- **Auto camera** (a tick on the shots): follows people, switching between
+  Demonstrations, Speaker, Table and Platform wide depending on where they stand
+  on the platform. Picking a shot yourself unticks it. With a Reader
   scene, someone standing at the table cuts to Reader and someone sitting to
   Table: under Follow people → *Adjust…*, set the reader line between a seated
   head and a standing one.
@@ -64,8 +71,8 @@ Meeting AV makes one.
   part, press **Start** as the speaker begins, and the speakers' screen counts
   down: green, amber in the last minute, red and counting up once over time.
   **Stop** gets the next part ready. With no part loaded it shows the time of
-  day. It sits at the top, with the meeting's first part loaded when the app
-  opens; switch **Screen** on to show it, and pick which screen under
+  day. It sits at the top. Until you press **Start**, which begins the meeting's
+  first part, the speakers see the time of day; switch **Screen** on to show it, and pick which screen under
   Settings → Timer. In the grid view, a fourth page (swipe left past Sound)
   controls it from a tablet.
 

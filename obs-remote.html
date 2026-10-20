@@ -33,6 +33,12 @@
   header { display: flex; align-items: center; gap: 12px 20px; margin-bottom: 14px; flex-wrap: wrap; }
   .headBtns { display: flex; gap: 8px; margin-left: auto; }
   .headBtns button { display: flex; align-items: center; gap: 8px; padding: 9px 12px; }
+  .headBtns .update { background: var(--ok); color: #fff; font-weight: 600; }
+  /* Simple mode: the timer's Start and parts, the picture and the shots - everything automatic keeps
+     running; "More" shows the rest. */
+  body.simple .headBtns .full, body.simple #mixPanel, body.simple .cards,
+  body.simple #timerMinus, body.simple #timerPlus, body.simple #timerReset, body.simple .timerOther,
+  body.simple #timerScreenBtn { display: none; }
   @media (max-width: 600px) { .headBtns .lbl { display: none; } }
   h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 10px; }
   h1 svg { color: var(--accent); }
@@ -47,7 +53,7 @@
   .dot.on { background: var(--ok); }
   /* Everything needed during the meeting fits on one screen: picture + shots, then status cards. */
   .top { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 16px; }
   @media (max-width: 900px) { .top, .cards { grid-template-columns: 1fr; } }
   .cards .panel { display: flex; flex-direction: column; }
   .cards .link { margin-top: auto; padding-top: 10px; align-self: flex-start; }
@@ -156,7 +162,21 @@
   .mix .mute.muted { background: var(--live); color: #fff; }
   .mix .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mix .slide { position: relative; display: flex; align-items: center; }
-  .mix input[type=range] { width: 100%; margin: 0; accent-color: var(--accent); }
+  /* Slim track that fills up to the volume, a round handle, and the level just under it. */
+  .mix input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0;
+                           background: none; border: 0; padding: 0; cursor: pointer; }
+  .mix input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) var(--v, 0%), var(--line) var(--v, 0%)); }
+  .mix input[type=range]::-moz-range-track { height: 6px; border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) var(--v, 0%), var(--line) var(--v, 0%)); }
+  .mix input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -6px;
+    border-radius: 50%; background: #fff; border: 2px solid var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .mix input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); }
+  .mix input[type=range]:disabled { cursor: default; }
+  .mix.muted .slide { opacity: .4; }
+  .mixer:not(.big) { gap: 12px; }
+  .mixer:not(.big) .mix { grid-template-columns: 36px 92px 1fr 72px; gap: 12px; }
+  .mixer:not(.big) .meter { bottom: 0; height: 3px; }
   .mix .meter { position: absolute; left: 0; right: 0; bottom: -5px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
   .mix .meter span { display: block; height: 100%; width: 0; background: var(--ok); transition: width .1s linear; }
   .mix .val { font-size: 13px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -171,11 +191,11 @@
   .mixer.big .mute svg.i { width: 34px; height: 34px; }
   .mixer.big input[type=range] { -webkit-appearance: none; appearance: none; height: 44px; background: none;
                                  border: 0; padding: 0; box-shadow: none; }
-  .mixer.big input[type=range]::-webkit-slider-runnable-track { height: 14px; border-radius: 7px; background: var(--line); }
-  .mixer.big input[type=range]::-moz-range-track { height: 14px; border-radius: 7px; background: var(--line); }
+  .mixer.big input[type=range]::-webkit-slider-runnable-track { height: 14px; border-radius: 7px; }
+  .mixer.big input[type=range]::-moz-range-track { height: 14px; border-radius: 7px; }
   .mixer.big input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 40px; height: 40px; margin-top: -13px;
     border-radius: 50%; background: var(--accent); border: 4px solid var(--panel); box-shadow: 0 1px 4px rgba(0,0,0,.3); }
-  .mixer.big input[type=range]::-moz-range-thumb { width: 32px; height: 32px; border-radius: 50%; background: var(--accent);
+  .mixer.big input[type=range]::-moz-range-thumb { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); margin: 0;
     border: 4px solid var(--panel); }
   .mixer.big .meter { height: 6px; bottom: -6px; border-radius: 3px; }
   .mixer.big .val { font-size: 20px; }
@@ -219,6 +239,15 @@
   .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   /* Timer: a slim bar above everything - the time and its buttons, then the meeting's parts in a row. */
   .timerBar { margin-bottom: 16px; padding: 12px 16px; }
+  /* Follow people as a tick on the shots: ticked, it picks the shot; unticked, you do. */
+  .autoRow { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: -4px 0 10px; }
+  .autoTick { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; cursor: pointer;
+              min-width: 0; white-space: nowrap; }
+  .autoTick input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex: none; }
+  .tickStatus { font-weight: 400; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+  .tickStatus:not(:empty)::before { content: "· "; }
+  label.tick { flex-direction: row; align-items: center; gap: 10px; font-size: 15px; color: var(--text); }
+  label.tick input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
   .timerTop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .timerIco { color: var(--muted); display: grid; }
   .timerTime { flex: 1; min-width: 150px; }
@@ -344,10 +373,12 @@
     <h1><i data-icon="video"></i>Meeting AV</h1>
     <div class="status"><span class="dot" id="dot"></span><span id="statusText">Not connected</span></div>
     <div class="headBtns">
-      <button id="gridBtn" title="Just the shots, big"><i data-icon="grid"></i><span class="lbl">Grid</span></button>
-      <button id="tabletBtn" data-open="tablet" title="Connect a tablet or phone"><i data-icon="tablet"></i><span class="lbl">Tablet</span></button>
-      <button id="checkBtn" title="Check everything is ready"><i data-icon="list"></i><span class="lbl">Check</span></button>
-      <button data-open="connection" title="Settings"><i data-icon="sliders"></i><span class="lbl">Settings</span></button>
+      <button id="updateBtn" class="update" hidden title="A new version is downloaded: restart to use it"><i data-icon="download"></i><span class="lbl">Restart to update</span></button>
+      <button id="gridBtn" class="full" title="Just the shots, big"><i data-icon="grid"></i><span class="lbl">Grid</span></button>
+      <button id="tabletBtn" class="full" data-open="tablet" title="Connect a tablet or phone"><i data-icon="tablet"></i><span class="lbl">Tablet</span></button>
+      <button id="checkBtn" class="full" title="Check everything is ready"><i data-icon="list"></i><span class="lbl">Check</span></button>
+      <button class="full" data-open="connection" title="Settings"><i data-icon="sliders"></i><span class="lbl">Settings</span></button>
+      <button id="viewBtn" class="mainOnly"></button>
     </div>
   </header>
   <div class="alerts" id="alerts" hidden></div>
@@ -428,18 +459,14 @@
   </section>
 
   <div class="top">
-    <section class="panel">
-      <div class="preview">
-        <img id="preview" alt="">
-        <span class="badge" id="badge">OFF AIR</span>
-        <span class="onAir" id="onAir"></span>
-      </div>
-      <button class="camBtn" id="camBtn" disabled></button>
-    </section>
     <div class="side">
       <section class="panel">
-        <div class="panelHead"><h2><i data-icon="film"></i>Shots</h2><span class="hint" id="shotsHint"></span></div>
-        <div id="shots"><div class="empty">Waiting for OBS…</div></div>
+        <div class="preview">
+          <img id="preview" alt="">
+          <span class="badge" id="badge">OFF AIR</span>
+          <span class="onAir" id="onAir"></span>
+        </div>
+        <button class="camBtn" id="camBtn" disabled></button>
       </section>
       <section class="panel" id="mixPanel" hidden>
         <div class="panelHead"><h2><i data-icon="volume"></i>Sound</h2></div>
@@ -453,49 +480,24 @@
         </div>
       </section>
     </div>
+    <div class="side">
+      <section class="panel">
+        <div class="panelHead">
+          <h2><i data-icon="film"></i>Shots</h2>
+          <span class="hint" id="shotsHint"></span>
+        </div>
+        <div class="autoRow">
+          <label class="autoTick" id="trackTick" title="Follow people: switch shots by where people are on the platform (Settings → Follow people)">
+            <input type="checkbox" id="trackChk">Auto camera<span class="tickStatus" id="trackStatus"></span></label>
+          <label class="autoTick" id="mediaTick" title="JW Library media: a picture cuts to Speaker + Monitor, a video to Monitor, and back when it's closed (Settings → JW Library)">
+            <input type="checkbox" id="mediaChk">Auto media<span class="tickStatus" id="mediaStatus"></span></label>
+        </div>
+        <div id="shots"><div class="empty">Waiting for OBS…</div></div>
+      </section>
+    </div>
   </div>
 
   <div class="cards">
-    <section class="panel">
-      <div class="panelHead">
-        <h2><i data-icon="clock"></i><span id="nextKind">Next meeting</span></h2>
-        <button class="toggle" id="autoStartBtn" role="switch"
-                title="At the start time, turn the camera on and cut from the holding screen to the speaker">Auto-start<span class="switch"></span></button>
-      </div>
-      <div class="meeting">
-        <div class="big" id="countdown">—</div>
-        <div class="hint" id="nextWhen"></div>
-      </div>
-      <div class="actions" style="align-items:center">
-        <button class="link" data-open="times" style="margin-left:auto">Change times</button>
-      </div>
-    </section>
-
-    <section class="panel" id="jwPanel">
-      <div class="panelHead">
-        <h2><i data-icon="wand"></i>JW Library media</h2>
-        <button class="toggle" id="autoBtn" role="switch" title="Cut to the screen when an image or video plays">Off<span class="switch"></span></button>
-      </div>
-      <div class="detect" id="detect">
-        <span class="ico" id="detIco"></span>
-        <div class="text"><div class="name" id="detName">—</div><div class="hint" id="detHint"></div></div>
-      </div>
-      <div class="warn" id="detWarn"></div>
-      <button class="link" data-open="jw">Adjust…</button>
-    </section>
-
-    <section class="panel" id="trackPanel">
-      <div class="panelHead">
-        <h2><i data-icon="scan"></i>Follow people</h2>
-        <button class="toggle" id="trackBtn" role="switch" title="Switch shots by where people are on the platform">Off<span class="switch"></span></button>
-      </div>
-      <div class="detect" id="trackState">
-        <span class="ico" id="trackIco"></span>
-        <div class="text"><div class="name" id="trackName">—</div><div class="hint" id="trackHint"></div></div>
-      </div>
-      <button class="link" data-open="track">Adjust…</button>
-    </section>
-
     <section class="panel" id="remoteNote" hidden>
       <div class="panelHead"><h2><i data-icon="tablet"></i>Tablet remote</h2></div>
       <div class="empty">JW Library media and people following are handled by the meeting PC.</div>
@@ -516,6 +518,7 @@
     <button data-tab="layers">Layers</button>
     <button data-tab="tablet" class="mainOnly">Tablet</button>
     <button data-tab="timer" class="mainOnly">Timer</button>
+    <button data-tab="app" class="mainOnly">App</button>
   </nav>
   <div class="dlgBody">
     <div data-pane="connection">
@@ -534,6 +537,13 @@
     </div>
 
     <div data-pane="times">
+      <div class="meeting" style="margin-bottom:14px">
+        <div class="hint" id="nextKind">Next meeting</div>
+        <div class="big" id="countdown">—</div>
+        <div class="hint" id="nextWhen"></div>
+      </div>
+      <label class="tick" id="autoStartRow" style="margin-bottom:14px">
+        <input type="checkbox" id="autoStartChk"> Auto-start: at the start time, turn the camera on and cut from the holding screen to the speaker</label>
       <div class="times">
         <span>Midweek</span><select id="midDay"></select><input id="midTime" type="time">
         <span>Weekend</span><select id="weDay"></select><input id="weTime" type="time">
@@ -543,6 +553,11 @@
     </div>
 
     <div data-pane="jw">
+      <div class="detect" id="detect" style="margin-bottom:8px">
+        <span class="ico" id="detIco"></span>
+        <div class="text"><div class="name" id="detName">—</div><div class="hint" id="detHint"></div></div>
+      </div>
+      <div class="warn" id="detWarn" style="margin-bottom:12px"></div>
       <div class="detect" style="margin-bottom:12px">
         <img id="detPreview" alt="">
         <div class="text"><div class="name">What JW Library is showing</div>
@@ -597,6 +612,14 @@
     </div>
 
     <div data-pane="tablet"><div id="remoteBox"></div></div>
+    <div data-pane="app">
+      <div class="setup" style="margin-top:0">
+        <label class="tick"><input type="checkbox" id="appStartup"> Start Meeting AV when Windows starts</label>
+        <label class="tick"><input type="checkbox" id="appUpdates"> Update automatically from GitHub</label>
+      </div>
+      <div class="actions"><button id="appCheck">Check for updates now</button></div>
+      <p class="help" id="appInfo"></p>
+    </div>
     <div data-pane="timer">
       <div class="setup" style="margin-top:0">
         <label>Show the timer on
@@ -667,6 +690,8 @@ const ICONS = {
   volumeX: '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>',
   timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2"/><path d="M9.5 2h5"/>',
   book: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5v-2z"/><path d="M8 7h8M8 11h6"/>',
+  download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+  more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   list: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="m3 6 1 1 2-2"/><path d="m3 12 1 1 2-2"/><path d="m3 18 1 1 2-2"/>',
   sliders: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
@@ -1025,15 +1050,14 @@ function renderItems() {
 }
 
 function switchScene(name) { call('SetCurrentProgramScene', { sceneName: name }).catch(showError); }
-// Picking a shot turns Follow people off, so it stays on that shot until it's switched back on -
-// on a tablet too: the PC does the following, so the tablet tells it through OBS.
-// JW Library media still cuts to the screen and back.
+// Picking a shot turns Auto camera off, so it stays on that shot until it's ticked again - on a
+// tablet too: the PC does the following, so the tablet tells it through OBS. Auto media carries on.
 function manualSwitch(name) {
   if (track.on) followOffByPick();
   if (!isMain) call('BroadcastCustomEvent', { eventData: { meetingCameraPick: name } }).catch(() => {});
   switchScene(name);
 }
-function followOffByPick() { setTrackOn(false); track.offByPick = true; renderTrack(); }
+function followOffByPick() { setFollow(false, true); }
 function toggleCam() { call(state.camOn ? 'StopVirtualCam' : 'StartVirtualCam').catch(showError); }
 // A banner under the header: errors disappear after a while, notes stay until fixed.
 let msgTimer = null;
@@ -1075,13 +1099,14 @@ function renderMix(a) {
   for (const t of MIX) document.querySelectorAll(`.mix[data-target="${t}"]`).forEach(row => {
     const s = a[t], range = row.querySelector('input'), btn = row.querySelector('.mute');
     row.classList.toggle('off', !s);
+    row.classList.toggle('muted', !!s && s.mute);
     range.disabled = btn.disabled = !s;
     btn.classList.toggle('muted', !!s && s.mute);
     btn.innerHTML = icon(s && s.mute ? 'volumeX' : 'volume');
     btn.title = s && s.mute ? 'Unmute' : 'Mute';
     row.querySelector('.meter span').style.width = s && !s.mute ? Math.min(100, Math.sqrt(s.peak) * 100) + '%' : '0';
     if (!s) { row.querySelector('.val').textContent = t === 'system' ? 'No speakers' : 'Silent'; return; }
-    if (!mixDragging[t]) range.value = Math.round(s.vol * 100);
+    if (!mixDragging[t]) { range.value = Math.round(s.vol * 100); range.style.setProperty('--v', range.value + '%'); }
     row.querySelector('.val').textContent = s.mute ? 'Muted' : range.value + '%';
   });
 }
@@ -1119,6 +1144,7 @@ document.querySelectorAll('.mix').forEach(row => {
   range.oninput = () => {
     mixDragging[t] = true;
     row.querySelector('.val').textContent = range.value + '%';
+    range.style.setProperty('--v', range.value + '%');
     clearTimeout(sending);
     sending = setTimeout(() => setAudio(t, { vol: range.value }), 50);
   };
@@ -1159,14 +1185,19 @@ function fmtTimer(ms) {   // rounded up while counting down, so it reaches 0:00 
   return (ms < 0 ? '+' : '') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
 
+// With no part loaded the speakers see the time of day, and Start begins the meeting's first part.
+const clockNow = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const cuedPart = () => timer && !timer.length ? (inApp ? timerParts : timer.parts || [])[0] : null;
+const cuedText = p => p ? `Next: ${p.title} · ${p.min} min` : '';
+
 function renderTimer() {
   if (!timer) return;
-  const big = $('timerBig'), loaded = timer.length > 0, left = timerLeft();
-  big.textContent = loaded ? fmtTimer(left) : 'No part';
-  $('timerLabel').textContent = loaded ? timer.label : '';
+  const big = $('timerBig'), loaded = timer.length > 0, left = timerLeft(), cued = cuedPart();
+  big.textContent = loaded ? fmtTimer(left) : clockNow();
+  $('timerLabel').textContent = loaded ? timer.label : cuedText(cued);
   big.className = 'timerBig' + (!loaded ? '' : left < 0 ? ' over' : left <= 60000 ? ' warn' : ' ok') + (loaded && !timer.running ? ' paused' : '');
   const go = $('timerStart');
-  go.disabled = !loaded;
+  go.disabled = !loaded && !cued;
   go.classList.toggle('running', timer.running);
   go.innerHTML = icon(timer.running ? 'pause' : 'play') + (timer.running ? 'Stop' : 'Start');
   $('timerMinus').disabled = $('timerPlus').disabled = $('timerReset').disabled = !loaded;
@@ -1181,7 +1212,7 @@ const timerDo = q => appFetch('/timer/set?' + new URLSearchParams(q))
 
 // The next meeting's parts: the midweek one's from that week's workbook on wol.jw.org (the app
 // fetches it once and keeps it, so it works offline at the hall); the weekend one's never change.
-let timerParts = [], timerPartsNote = '', firstPartReady = false;
+let timerParts = [], timerPartsNote = '';
 const WEEKEND_PARTS = [{ title: 'Public Talk', min: 30 }, { title: 'Watchtower Study', min: 60 }];
 
 function isoWeek(date) {   // wol.jw.org numbers the weeks the ISO way (Monday to Sunday)
@@ -1207,12 +1238,6 @@ async function loadTimerParts() {
   }
   partsFor = timerParts.length ? key : '';   // try again later if it failed
   timerPartsNote = note;
-  // When the app opens, the meeting's first part is ready to start (unless a part is already loaded).
-  if (!firstPartReady && timerParts.length) {
-    firstPartReady = true;
-    const t = timer || await appFetch('/timer').catch(() => null);
-    if (t && !t.length && !t.running) timerDo({ action: 'set', secs: timerParts[0].min * 60, label: timerParts[0].title });
-  }
   const box = $('timerParts');
   box.innerHTML = `<div class="week"></div>`;
   box.firstChild.textContent = note;
@@ -1234,6 +1259,11 @@ async function timerAct(q) {
   if (!inApp) {
     if (connected) call('BroadcastCustomEvent', { eventData: { meetingCameraTimerDo: q } }).catch(() => {});
     return;
+  }
+  // Start with no part loaded: the meeting's first part. Until then the speakers see the time of day.
+  if (q.action === 'start' && !(timer && timer.length) && timerParts.length) {
+    await timerDo({ action: 'set', secs: timerParts[0].min * 60, label: timerParts[0].title });
+    return timerDo({ action: 'start' });
   }
   if (q.action !== 'stopNext') return timerDo(q);
   const next = nextPart();
@@ -1317,12 +1347,12 @@ function renderTimerPage() {
   if (!gridMode || gridPage !== 3) return;
   $('tNote').textContent = !inApp && Date.now() - timerSeenAt > 4000 ? 'Waiting for Meeting AV on the PC…' : '';
   if (!timer) return;
-  const loaded = timer.length > 0, left = timerLeft(), big = $('tBig');
-  big.textContent = loaded ? fmtTimer(left) : 'No part';
+  const loaded = timer.length > 0, left = timerLeft(), big = $('tBig'), cued = cuedPart();
+  big.textContent = loaded ? fmtTimer(left) : clockNow();
   big.className = 'tBig' + (!loaded ? '' : left < 0 ? ' over' : left <= 60000 ? ' warn' : ' ok') + (loaded && !timer.running ? ' paused' : '');
-  $('tLabel').textContent = loaded ? timer.label : 'Pick a part';
+  $('tLabel').textContent = loaded ? timer.label : cuedText(cued) || 'Pick a part';
   const go = $('tStart');
-  go.disabled = !loaded;
+  go.disabled = !loaded && !cued;
   go.classList.toggle('running', timer.running);
   go.innerHTML = icon(timer.running ? 'pause' : 'play') + (timer.running ? 'Stop' : 'Start');
   $('tMinus').disabled = $('tPlus').disabled = $('tReset').disabled = !loaded;
@@ -1361,6 +1391,43 @@ const tLoadMins = () => {
 $('tLoad').onclick = tLoadMins;
 $('tMins').onkeydown = e => { if (e.key === 'Enter') tLoadMins(); };
 everyMs(100, renderTimerPage);
+
+// ---------------------------------------------------------------------------
+// Simple mode: just what running a meeting needs (the timer's Start and parts, the picture, the
+// shots); "More" shows everything. Each device remembers it; the PC starts simple.
+// ---------------------------------------------------------------------------
+let simple = isMain && store.get('simple', '1') === '1';
+function setSimple(on) {
+  simple = on;
+  store.set('simple', on ? '1' : '0');
+  document.body.classList.toggle('simple', on);
+  $('viewBtn').innerHTML = on ? icon('more') + '<span class="lbl">More</span>' : icon('check') + '<span class="lbl">Simple</span>';
+  $('viewBtn').title = on ? 'Show everything: sound, settings, checks…' : 'Just what running the meeting needs';
+}
+$('viewBtn').onclick = () => setSimple(!simple);
+
+// ---------------------------------------------------------------------------
+// The app: starting with Windows, and updates from GitHub (Settings → App, and a button at the top
+// once a new version is downloaded).
+// ---------------------------------------------------------------------------
+function renderApp(a) {
+  $('appStartup').checked = a.startup;
+  $('appUpdates').checked = a.updates;
+  $('updateBtn').hidden = a.update !== 'ready';
+  $('appInfo').textContent = `This version installed ${a.installed}. ` + ({
+    '': '', checking: 'Checking for updates…', 'up to date': 'It’s the latest.',
+    ready: 'A new version is downloaded — restart Meeting AV to use it (the button at the top).',
+  }[a.update] ?? a.update);
+}
+if (inApp) {
+  const app = q => appFetch('/app' + q).then(renderApp).catch(() => {});
+  $('appStartup').onchange = e => app('/set?startup=' + (e.target.checked ? 1 : 0));
+  $('appUpdates').onchange = e => app('/set?updates=' + (e.target.checked ? 1 : 0));
+  $('appCheck').onclick = () => app('/check');
+  $('updateBtn').onclick = () => appFetch('/app/restart').catch(() => {});
+  app('');
+  everyMs(30000, () => app(''));
+}
 
 // ---------------------------------------------------------------------------
 // Grid view: just the shots, big - for a tablet on a stand, or the PC. Each device remembers it;
@@ -1627,9 +1694,9 @@ function setDetected(next) {
 function renderDetect() {
   const box = $('detect');
   const views = {
-    none:  ['help',  'Not set up',      'Click Adjust… and pick the JW Library display.'],
+    none:  ['help',  'Not set up',      'Pick the JW Library display below.'],
     noscreen: ['monitor', 'JW Library isn’t open', 'Open JW Library to cut to the screen when media plays.'],
-    idle:  ['pause', 'Nothing showing', auto.on ? 'Cuts to the screen when media plays' : 'Turn on to cut to the screen when media plays'],
+    idle:  ['pause', 'Nothing showing', auto.on ? 'Cuts to the screen when media plays' : 'Tick Auto media on the shots to cut to the screen when media plays'],
     image: ['image', 'Image showing',   auto.on ? `On air: ${SLOTS.spkmon.title}` : 'Not switching (off)'],
     video: ['play',  'Video playing',   auto.on ? `On air: ${SLOTS.monitor.title}` : 'Not switching (off)'],
   };
@@ -1641,11 +1708,11 @@ function renderDetect() {
   $('detIco').innerHTML = icon(ic);
   $('detName').textContent = name;
   $('detHint').textContent = hint;
+  // The Auto media tick on the shots, with what's showing.
+  $('mediaChk').checked = auto.on;
+  $('mediaStatus').textContent = !auto.on ? '' : key === 'image' ? 'picture' : key === 'video' ? 'video'
+    : key === 'noscreen' ? 'JW Library closed' : key === 'none' ? 'not set up' : '';
 
-  const btn = $('autoBtn');
-  btn.classList.toggle('on', auto.on);
-  btn.firstChild.textContent = auto.on ? 'On' : 'Off';
-  btn.setAttribute('aria-checked', auto.on);
 
   renderPractice();
   // JW Library itself says what's open, so the idle screen and audio only matter for an OBS source.
@@ -1723,13 +1790,7 @@ $('idleBtn').onclick = () => {
   saveIdle(auto.prev);
   hideMsg();
 };
-function toggleAuto() {
-  auto.on = !auto.on;
-  auto.autoScene = auto.returnScene = null;
-  store.set('autoOn', auto.on ? '1' : '0');
-  renderDetect();
-}
-$('autoBtn').onclick = toggleAuto;
+function toggleAuto() { setMedia(!auto.on); }
 
 // Practice: pretend JW Library is showing something, to try the switching without a second screen.
 function simulate(det) {
@@ -1747,7 +1808,7 @@ function renderPractice() {
   $('simStop').hidden = !auto.sim;
   $('simWarn').textContent = !auto.sim ? ''
     : !connected ? 'Connect to OBS to see the camera switch.'
-    : !auto.on ? 'JW Library media is switched off, so the camera won’t move. Turn it on with the switch on its card.'
+    : !auto.on ? 'Auto media is off, so the camera won’t move. Tick Auto media on the shots.'
     : '';
 }
 document.querySelectorAll('[data-sim]').forEach(b => { b.onclick = () => simulate(b.dataset.sim); });
@@ -1925,15 +1986,12 @@ function drawTrack() {
 }
 
 function renderTrack() {
-  const btn = $('trackBtn');
-  btn.classList.toggle('on', track.on);
-  btn.firstChild.textContent = track.on ? 'On' : 'Off';
-  btn.setAttribute('aria-checked', track.on);
+  $('trackChk').checked = track.on;
 
   const paused = trackPausedBy();
   const n = track.people.filter(zoneOf).length;
   let view;
-  if (!track.src) view = ['help', 'Not set up', 'Click Adjust… and pick the platform camera.'];
+  if (!track.src) view = ['help', 'Not set up', 'Pick the platform camera under Settings → Follow people.'];
   else if (!track.on) view = ['pause', 'Off', track.offByPick ? 'Turned off when a shot was picked (here or on a tablet) — turn on to follow again'
                                                          : 'Turn on to switch shots by where people are'];
   else if (track.error) view = ['help', 'Detector problem', track.error];
@@ -1943,10 +2001,10 @@ function renderTrack() {
   else if (!track.want) view = ['scan', 'Nobody detected', 'Keeping the current shot'];
   else view = [SLOTS[track.want].icon, SLOTS[track.want].title, `${n} ${n === 1 ? 'person' : 'people'} on platform`];
 
-  $('trackState').className = 'detect' + (track.on && track.want && !paused && track.model ? ' active' : '');
-  $('trackIco').innerHTML = icon(view[0]);
-  $('trackName').textContent = view[1];
-  $('trackHint').textContent = view[2];
+  // Next to the tick: what it's doing, in a word or two (the reason when hovered).
+  $('trackStatus').textContent = !track.on ? (track.offByPick ? 'off — you picked a shot' : '')
+    : paused === 'media' ? 'paused — media' : paused === 'holding' ? 'paused — holding screen' : view[1];
+  $('trackTick').title = 'Auto camera: follows people on the platform. ' + view[2];
 
   $('splitAVal').textContent = track.splitA + '%';
   $('splitBVal').textContent = track.splitB + '%';
@@ -1970,12 +2028,23 @@ function setTrackSrc(name) {
 }
 
 $('trackSrc').onchange = e => setTrackSrc(e.target.value);
-function setTrackOn(on) {
+// Two ticks on the shots: Auto camera (following people on the platform) and Auto media (cutting to
+// the screen for JW Library media). Picking a shot yourself turns Auto camera off, not media.
+function setFollow(on, byPick = false) {
   track.on = on;
-  track.offByPick = false; track.error = '';
+  track.offByPick = byPick && !on; track.error = '';
   store.set('trackOn', on ? '1' : '0');
+  renderTrack();
 }
-$('trackBtn').onclick = () => { setTrackOn(!track.on); renderTrack(); };
+function setMedia(on) {
+  auto.on = on;
+  auto.autoScene = auto.returnScene = null;
+  store.set('autoOn', on ? '1' : '0');
+  renderDetect();
+  renderTrack();
+}
+$('trackChk').onchange = () => setFollow($('trackChk').checked);
+$('mediaChk').onchange = () => setMedia($('mediaChk').checked);
 ['splitA', 'splitB', 'floor', 'readerLine'].forEach(id => {
   const el = $(id);
   el.value = track[id];
@@ -2063,9 +2132,7 @@ const fmtWhen = d => d.toLocaleDateString([], { weekday: 'long' }) + ' ' +
 
 function renderMeeting() {
   const m = nextMeeting();
-  const btn = $('autoStartBtn');
-  btn.classList.toggle('on', sched.autoStart);
-  btn.setAttribute('aria-checked', sched.autoStart);
+  $('autoStartChk').checked = sched.autoStart;
   if (!m) return;
   const left = m.at - Date.now();
   $('nextKind').textContent = left > 0 ? `Next: ${m.kind} meeting` : `${m.kind} meeting`;
@@ -2139,8 +2206,8 @@ function holdingOnStart() {
   const m = nextMeeting();
   if (!(m && m.at <= Date.now())) showHolding();
 }
-$('autoStartBtn').onclick = () => {
-  sched.autoStart = !sched.autoStart;
+$('autoStartChk').onchange = () => {
+  sched.autoStart = $('autoStartChk').checked;
   store.set('autoStart', sched.autoStart ? '1' : '0');
   renderMeeting();
   shareTimes();
@@ -2273,7 +2340,7 @@ async function runCheck() {
     } catch { add('bad', 'JW Library’s second display is off', 'Turn it on in JW Library’s Settings.'); }
   }
   if (isMain) {
-    if (!auto.on) add('warn', 'JW Library auto-switch is off', '', ['Turn on', () => { if (!auto.on) toggleAuto(); }]);
+    if (!auto.on) add('warn', 'Auto media is off (JW Library media won’t cut to the screen)', '', ['Turn on', () => { if (!auto.on) toggleAuto(); }]);
     else if (!auto.mediaSrc) add('bad', 'JW Library auto-switch: no display source picked', 'Settings → JW Library.',
                                  ['Open', () => { $('checkDlg').close(); openSettings('jw'); }]);
     else if (!auto.idleRef) add('warn', 'JW Library auto-switch: idle screen not saved',
@@ -2473,6 +2540,7 @@ function openSettings(tab = settingsTab) {
   if (!$('settingsDlg').open) $('settingsDlg').showModal();
   if (tab === 'tablet') renderRemoteBox();
   if (tab === 'timer') renderTimerScreens();
+  if (tab === 'app') appFetch('/app').then(renderApp).catch(() => {});
   if (tab === 'track') drawTrack();
 }
 document.querySelectorAll('#tabs button').forEach(b => { b.onclick = () => openSettings(b.dataset.tab); });
@@ -2565,7 +2633,7 @@ if (fromLink.has('host')) {
   store.set('password', fromLink.get('pw') || '');
 }
 if (!isMain) {
-  $('jwPanel').hidden = $('trackPanel').hidden = $('autoStartBtn').hidden = $('tabletBtn').hidden = true;
+  $('trackTick').hidden = $('mediaTick').hidden = $('autoStartRow').hidden = $('tabletBtn').hidden = true;
   document.querySelectorAll('.mainOnly').forEach(el => { el.hidden = true; });
   $('remoteNote').hidden = false;
 }
@@ -2575,6 +2643,7 @@ $('host').value = isMain ? store.get('host', 'localhost') : location.hostname;
 $('port').value = store.get('port', '4455');
 $('password').value = store.get('password', '');
 setGridMode(gridMode);
+setSimple(simple);
 setCam(false);
 renderMeeting();
 renderDetect();
