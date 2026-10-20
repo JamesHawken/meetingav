@@ -377,6 +377,7 @@ static class MeetingCamera
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
     struct RECT { public int Left, Top, Right, Bottom; }
 
     static readonly object JwLock = new object();
@@ -400,7 +401,7 @@ static class MeetingCamera
     }
 
     static AutomationElement JwMain;
-    static volatile string JwMedia = "none";   // what JW Library has open: none, image, video, unknown or closed
+    static volatile string JwMedia = "none";   // what JW Library has open: none, image, video, unknown, hidden or closed
     static DateTime JwStateAskedAt = DateTime.MinValue;
 
     // Looking through JW Library's window takes up to a second, so it's done here in the background
@@ -419,7 +420,9 @@ static class MeetingCamera
     // Asking JW Library beats guessing from the screen, which can't tell a still moment in a video
     // (a title, a scripture) from a picture, and sees the desktop when JW Library isn't showing.
     // While JW Library changes page its window can look empty for a moment: that's "unknown", not
-    // "none", so the camera doesn't cut away from a song that's just starting.
+    // "none", so the camera doesn't cut away from a song that's just starting. A playing video looks
+    // empty too once its controls hide; the page counts a lasting "unknown" as a video. Minimised,
+    // the window looks empty as well, so that's "hidden" (keep the shot) rather than "unknown".
     static string JwMediaOpen()
     {
         if (Process.GetProcessesByName("JWLibrary").Length == 0) { JwMain = null; return "closed"; }
@@ -432,11 +435,16 @@ static class MeetingCamera
                     if (JwMain == null)
                     {
                         var menu = new PropertyCondition(AutomationElement.AutomationIdProperty, "HamburgerRadioButton");
+                        bool minimised = false;
                         foreach (AutomationElement w in AutomationElement.RootElement.FindAll(TreeScope.Children,
                                      new PropertyCondition(AutomationElement.NameProperty, "JW Library")))
+                        {
+                            if (IsIconic(new IntPtr(w.Current.NativeWindowHandle))) { minimised = true; continue; }
                             if (w.FindFirst(TreeScope.Descendants, menu) != null) { JwMain = w; break; }
-                        if (JwMain == null) return "none";
+                        }
+                        if (JwMain == null) return minimised ? "hidden" : "none";
                     }
+                    if (IsIconic(new IntPtr(JwMain.Current.NativeWindowHandle))) return "hidden";
                     // One pass through the window for all three: a song's page is big, and looking
                     // three times made the cut to the screen noticeably late.
                     bool video = false, image = false, page = false;

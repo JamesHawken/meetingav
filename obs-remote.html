@@ -1298,8 +1298,13 @@ everyMs(500, async () => {
       if (frame && !document.hidden) $('detPreview').src = frame;
       const closed = !state || state.media === 'closed';
       if (closed !== auto.screenMissing) { auto.screenMissing = closed; renderDetect(); }
-      if (state && state.media === 'unknown') return;   // JW Library is between pages: keep the shot
-      const now = state && state.media === 'video' ? 'video' : state && state.media === 'image' ? 'image' : 'idle';
+      if (state && state.media === 'hidden') return;   // JW Library minimised: keep the shot
+      // An empty-looking window is JW Library between pages (keep the shot) - or, if it lasts, a video
+      // playing with its controls hidden (pictures and pages are never empty for long).
+      auto.unknownCount = state && state.media === 'unknown' ? (auto.unknownCount || 0) + 1 : 0;
+      if (auto.unknownCount && auto.unknownCount < 3) return;
+      const media = auto.unknownCount ? 'video' : state && state.media;
+      const now = media === 'video' ? 'video' : media === 'image' ? 'image' : 'idle';
       // Going from one item to the next passes through the media list for a moment; only call it
       // finished after a second of nothing, so the camera doesn't bounce.
       auto.idleCount = now === 'idle' ? (auto.idleCount || 0) + 1 : 0;
