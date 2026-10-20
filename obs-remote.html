@@ -235,6 +235,40 @@
     .mixer.big .slide { grid-area: slide; } .mixer.big .val { grid-area: val; font-size: 16px; }
   }
 
+  /* Ready bar: before a meeting, green when everything's ready, or what to sort out with a button to fix it. */
+  .readyBar { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-radius: 14px; margin-bottom: 16px;
+              border: 2px solid var(--ok); background: color-mix(in srgb, var(--ok) 10%, var(--panel)); }
+  .readyBar.bad { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--panel)); }
+  .readyHead { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
+  .readyHead > svg.i { color: var(--ok); }
+  .readyBar.bad .readyHead > svg.i { color: var(--warn); }
+  .readyHead .when { font-weight: 400; font-size: 13px; color: var(--muted); }
+  .readyHead button { margin-left: auto; padding: 6px 12px; font-size: 13px; }
+  .readyItem { display: flex; align-items: center; gap: 10px; font-size: 14px; padding-left: 30px; }
+  .readyItem .text { flex: 1; min-width: 0; }
+  .readyItem .sub { color: var(--muted); font-size: 13px; }
+  .readyItem button { flex: none; padding: 6px 12px; font-size: 13px; font-weight: 600; background: var(--accent); color: #fff; }
+
+  /* A ? next to each part of the screen: tap it for a sentence on what it does. */
+  .q { width: 20px; height: 20px; padding: 0; border-radius: 50%; font-size: 12px; font-weight: 700; flex: none;
+       display: inline-grid; place-items: center; background: var(--btn); color: var(--muted); margin-left: 6px;
+       text-transform: none; letter-spacing: 0; vertical-align: middle; }
+  .q:hover { background: var(--accent-soft); color: var(--accent); }
+  #tip { position: absolute; z-index: 30; max-width: 320px; padding: 10px 12px; border-radius: 10px; font-size: 13px;
+         line-height: 1.45; background: var(--text); color: var(--bg); box-shadow: 0 6px 20px rgba(0,0,0,.3); }
+
+  /* Setup guide: one step at a time, using the same controls as Settings. */
+  #guideDlg { width: min(860px, calc(100vw - 32px)); }
+  .gText { font-size: 15px; margin: 0 0 12px; line-height: 1.5; }
+  #gStatus:not(:empty) { margin-bottom: 12px; }
+  .gNav { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); flex: none; }
+  .gCount { color: var(--muted); font-size: 13px; margin-right: auto; }
+  .gNav .gPrimary, .gNav .gPrimary:hover { background: var(--accent); color: #fff; font-weight: 700; }
+  .gShots { display: grid; grid-template-columns: auto auto 1fr; gap: 6px 14px; align-items: center; font-size: 14px; }
+  .gShots svg.i { width: 18px; height: 18px; }
+  .gShots .ok { color: var(--ok); } .gShots .bad { color: var(--live); }
+  .gShots .words { color: var(--muted); }
+
   /* Timer, under the shots: the time with its buttons, the meeting's parts, and any other length. */
   .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   /* Timer: a slim bar above everything - the time and its buttons, then the meeting's parts in a row. */
@@ -441,6 +475,8 @@
     <div class="checks" id="setupSteps"></div>
   </section>
 
+  <section class="readyBar" id="readyBar" hidden></section>
+
   <section class="panel timerBar" id="timerPanel" hidden>
     <div class="timerTop">
       <span class="timerIco"><i data-icon="timer"></i></span>
@@ -504,6 +540,23 @@
     </section>
   </div>
 </main>
+
+<dialog id="guideDlg">
+  <div class="dlgHead">
+    <h2><i data-icon="wand"></i><span id="gTitle"></span></h2>
+    <button class="dlgClose" title="Close"><i data-icon="x"></i></button>
+  </div>
+  <div class="dlgBody">
+    <p class="gText" id="gText"></p>
+    <div id="gStatus"></div>
+    <div id="gBody"></div>
+  </div>
+  <div class="gNav">
+    <span class="gCount" id="gCount"></span>
+    <button id="gBack">Back</button>
+    <button id="gNext" class="gPrimary">Next</button>
+  </div>
+</dialog>
 
 <dialog id="settingsDlg">
   <div class="dlgHead">
@@ -617,7 +670,7 @@
         <label class="tick"><input type="checkbox" id="appStartup"> Start Meeting AV when Windows starts</label>
         <label class="tick"><input type="checkbox" id="appUpdates"> Update automatically from GitHub</label>
       </div>
-      <div class="actions"><button id="appCheck">Check for updates now</button></div>
+      <div class="actions"><button id="appCheck">Check for updates now</button><button id="guideBtn"><i data-icon="wand"></i>Run the setup guide</button></div>
       <p class="help" id="appInfo"></p>
     </div>
     <div data-pane="timer">
@@ -2270,12 +2323,18 @@ async function loadTimes() {
 async function runCheck() {
   if (!$('checkDlg').open) $('checkDlg').showModal();
   $('checks').innerHTML = '<div class="empty">Checking…</div>';
+  renderCheck(await collectChecks());
+}
+
+// Everything that's ready or needs fixing, each with a way to fix it where Meeting AV can. Used by
+// the Check list and the ready bar.
+async function collectChecks() {
   const rows = [];
   const add = (level, text, sub = '', fix = null) => rows.push({ level, text, sub, fix });
 
   if (!connected) {
     add('bad', 'Not connected to OBS', 'Is OBS open? The connection details are under Settings.');
-    return renderCheck(rows);
+    return rows;
   }
   add('ok', 'Connected to OBS');
   const [cam, stats, inputs] = await Promise.all([call('GetVirtualCamStatus'), call('GetStats'), call('GetInputList')]);
@@ -2343,7 +2402,7 @@ async function runCheck() {
     if (!auto.on) add('warn', 'Auto media is off (JW Library media won’t cut to the screen)', '', ['Turn on', () => { if (!auto.on) toggleAuto(); }]);
     else if (!auto.mediaSrc) add('bad', 'JW Library auto-switch: no display source picked', 'Settings → JW Library.',
                                  ['Open', () => { $('checkDlg').close(); openSettings('jw'); }]);
-    else if (!auto.idleRef) add('warn', 'JW Library auto-switch: idle screen not saved',
+    else if (auto.mediaSrc !== JW_SCREEN && !auto.idleRef) add('warn', 'JW Library auto-switch: idle screen not saved',
                                 'With the yeartext showing, Settings → JW Library → Save idle screen.',
                                 ['Open', () => { $('checkDlg').close(); openSettings('jw'); }]);
     else add('ok', 'JW Library auto-switch ready', `Watching “${auto.mediaSrc}”`);
@@ -2353,9 +2412,26 @@ async function runCheck() {
     }
   }
 
+  if (inApp) {
+    // The speakers' timer screen, if there's a screen for it.
+    try {
+      const { screens } = await appFetch('/screens');
+      const spare = screens.some(s => !s.main && !s.jw);
+      if (timer && timer.shown) add('ok', 'Timer screen is on');
+      else if (spare) add('warn', 'The timer screen is off', 'The speakers can’t see how long they have left.',
+                          ['Show it', () => appFetch('/timer/show?screen=auto')]);
+    } catch {}
+    // Zoom only makes a sound control once it's in a meeting.
+    try {
+      const a = await appFetch('/audio');
+      if (a.zoom) add('ok', 'Zoom is in the meeting');
+      else add('warn', 'Zoom hasn’t joined the meeting yet', 'Start Zoom and join the meeting.');
+    } catch {}
+  }
+
   const cpu = Math.round(stats.cpuUsage);
   add(cpu > 80 ? 'warn' : 'ok', `OBS is using ${cpu}% CPU`, `${Math.round(stats.activeFps)} frames per second`);
-  renderCheck(rows);
+  return rows;
 }
 
 function renderCheck(rows) {
@@ -2388,6 +2464,54 @@ function renderCheck(rows) {
 
 $('checkBtn').onclick = () => runCheck().catch(showError);
 $('recheckBtn').onclick = () => runCheck().catch(showError);
+
+// ---------------------------------------------------------------------------
+// Ready bar: from half an hour before a meeting until it starts, the checks run every minute and
+// a bar at the top says "Ready" - or what to sort out, with a button where Meeting AV can fix it.
+// ---------------------------------------------------------------------------
+let readyBusy = false;
+async function readyTick() {
+  if (!isMain || !inApp || readyBusy) return;
+  const m = nextMeeting(), now = Date.now();
+  if (!m || m.at - now > 30 * 60e3 || now - m.at > 5 * 60e3) { $('readyBar').hidden = true; return; }
+  readyBusy = true;
+  try { renderReady(await collectChecks(), m); } catch {} finally { readyBusy = false; }
+}
+
+function renderReady(rows, m) {
+  const issues = rows.filter(r => r.level !== 'ok'), bar = $('readyBar');
+  bar.hidden = false;
+  bar.className = 'readyBar' + (issues.length ? ' bad' : '');
+  bar.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'readyHead';
+  head.innerHTML = icon(issues.length ? 'alert' : 'check') + '<span></span><span class="when"></span><button>Details</button>';
+  head.children[1].textContent = issues.length
+    ? `${issues.length} thing${issues.length > 1 ? 's' : ''} to sort out before the meeting`
+    : `Ready for the ${m.kind.toLowerCase()} meeting`;
+  head.children[2].textContent = m.at > Date.now() ? `starts in ${fmtLeft(m.at - Date.now())}` : 'started';
+  head.querySelector('button').onclick = () => runCheck().catch(showError);
+  bar.appendChild(head);
+  issues.slice(0, 4).forEach(r => {
+    const d = document.createElement('div');
+    d.className = 'readyItem';
+    d.innerHTML = '<div class="text"><div></div><div class="sub"></div></div>';
+    d.querySelector('.text div').textContent = r.text;
+    d.querySelector('.sub').textContent = r.sub;
+    if (r.fix) {
+      const b = document.createElement('button');
+      b.textContent = r.fix[0];
+      b.onclick = async () => {
+        try { await r.fix[1](); } catch (err) { showError(err); }
+        setTimeout(readyTick, 1000);
+      };
+      d.appendChild(b);
+    }
+    bar.appendChild(d);
+  });
+}
+everyMs(60e3, readyTick);
+setTimeout(readyTick, 8000);   // once connected
 
 // ---------------------------------------------------------------------------
 // Problem alerts: a red banner (and a beep) when something breaks during a meeting.
@@ -2546,6 +2670,152 @@ function openSettings(tab = settingsTab) {
 document.querySelectorAll('#tabs button').forEach(b => { b.onclick = () => openSettings(b.dataset.tab); });
 document.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => openSettings(b.dataset.open); });
 document.querySelectorAll('.dlgClose').forEach(b => { b.onclick = () => b.closest('dialog').close(); });
+
+// ---------------------------------------------------------------------------
+// Setup guide: getting a new PC (or a new operator) going one step at a time. The steps show the
+// same controls as Settings - each Settings tab moves into the guide for its step, and back after.
+// It opens by itself the first time; Settings → App runs it again.
+// ---------------------------------------------------------------------------
+const SHOT_WORDS = { demo: 'demo', wide: 'wide or platform', table: 'table', reader: 'reader (optional)', speaker: 'speaker',
+                     spkmon: 'speaker and monitor', monitor: 'monitor or screen', holding: 'holding, countdown or welcome' };
+const GUIDE = [
+  { title: 'Welcome to Meeting AV',
+    text: 'A few quick steps to get this PC ready for meetings. Skip anything you like - Settings → App runs this guide again.' },
+  { title: 'OBS',
+    text: 'Meeting AV works the cameras through OBS. Open OBS and Meeting AV connects to it by itself.',
+    status: () => connected ? ['ok', 'Connected to OBS'] : ['bad', 'Not connected yet - is OBS open?'] },
+  { title: 'Camera shots',
+    text: 'Each shot is a scene in OBS. Meeting AV finds them by their names, so name each scene with the words below.',
+    body: shotsGuide },
+  { title: 'Meeting times',
+    text: 'When your meetings are. The holding screen counts down to them, and the timer gets each week’s parts.',
+    pane: 'times' },
+  { title: 'JW Library',
+    text: 'Open JW Library with Second display on (in JW Library’s Settings). When it shows a picture or video, ' +
+          'Meeting AV cuts to the screen, and back when it’s closed.', pane: 'jw' },
+  { title: 'Timer screen',
+    text: 'Pick a screen the speakers can see. It counts down each part: green, then amber in the last minute, red when over.',
+    pane: 'timer' },
+  { title: 'Follow people (optional)',
+    text: 'Pick the camera that sees the whole platform, then drag the lines so each area matches where people stand.',
+    pane: 'track' },
+  { title: 'Tablet (optional)',
+    text: 'Run everything from a tablet on the hall Wi-Fi: scan this code with it.', pane: 'tablet' },
+  { title: 'All set',
+    text: 'Before each meeting a bar at the top says whether everything’s ready, with a button to fix anything that ' +
+          'isn’t. Tap ? next to anything for a quick explanation of what it does.' },
+];
+let guideStep = 0, guidePane = null;
+
+function shotsGuide() {
+  const { bySlot } = layout();
+  const box = document.createElement('div');
+  box.className = 'gShots';
+  for (const [key, slot] of Object.entries(SLOTS)) {
+    const found = bySlot[key];
+    box.insertAdjacentHTML('beforeend', `${icon(found ? 'check' : 'x')}<b></b><span class="words"></span>`);
+    box.lastElementChild.previousElementSibling.previousElementSibling.setAttribute('class', 'i ' + (found ? 'ok' : 'bad'));
+    box.lastElementChild.previousElementSibling.textContent = slot.title;
+    box.lastElementChild.textContent = found ? `found “${found}”` : `name a scene with: ${SHOT_WORDS[key] || key}`;
+  }
+  return box;
+}
+
+function putPaneBack() {
+  if (!guidePane) return;
+  guidePane.placeholder.replaceWith(guidePane.el);
+  guidePane = null;
+}
+
+function showGuideStep(n) {
+  putPaneBack();
+  guideStep = Math.max(0, Math.min(GUIDE.length - 1, n));
+  const step = GUIDE[guideStep];
+  $('gTitle').textContent = step.title;
+  $('gText').textContent = step.text;
+  $('gCount').textContent = `Step ${guideStep + 1} of ${GUIDE.length}`;
+  $('gBack').hidden = guideStep === 0;
+  $('gNext').textContent = guideStep === GUIDE.length - 1 ? 'Done' : guideStep === 0 ? 'Start' : 'Next';
+  const status = $('gStatus');
+  status.innerHTML = '';
+  if (step.status) {
+    const [level, text] = step.status();
+    status.innerHTML = `<div class="check ${level}">${icon(level === 'ok' ? 'check' : 'alert')}<div class="text"></div></div>`;
+    status.querySelector('.text').textContent = text;
+  }
+  const body = $('gBody');
+  body.innerHTML = '';
+  if (step.body) body.appendChild(step.body());
+  if (step.pane) {   // the Settings tab itself, moved in for this step
+    const el = document.querySelector(`[data-pane="${step.pane}"]`), placeholder = document.createComment('pane');
+    el.replaceWith(placeholder);
+    guidePane = { el, placeholder };
+    el.hidden = false;
+    body.appendChild(el);
+    if (step.pane === 'tablet') renderRemoteBox();
+    if (step.pane === 'timer') renderTimerScreens();
+    if (step.pane === 'track') drawTrack();
+  }
+}
+
+function openGuide() {
+  if ($('settingsDlg').open) $('settingsDlg').close();
+  showGuideStep(0);
+  if (!$('guideDlg').open) $('guideDlg').showModal();
+}
+$('gBack').onclick = () => showGuideStep(guideStep - 1);
+$('gNext').onclick = () => guideStep === GUIDE.length - 1 ? $('guideDlg').close() : showGuideStep(guideStep + 1);
+$('guideDlg').addEventListener('close', () => { putPaneBack(); store.set('guided', '1'); });
+$('guideBtn').onclick = openGuide;
+// The status of the OBS step follows the connection while it's showing.
+everyMs(1000, () => { if ($('guideDlg').open && GUIDE[guideStep].status) showGuideStatus(); });
+function showGuideStatus() {
+  const [level, text] = GUIDE[guideStep].status();
+  const row = $('gStatus').firstElementChild;
+  if (row && row.querySelector('.text').textContent !== text) showGuideStep(guideStep);
+}
+if (isMain && inApp && store.get('guided', '') !== '1') setTimeout(openGuide, 2500);   // the first time
+
+// ---------------------------------------------------------------------------
+// Help: a ? next to each part of the screen; tapping it explains it in a sentence or two.
+// ---------------------------------------------------------------------------
+const tip = document.createElement('div');
+tip.id = 'tip';
+tip.hidden = true;
+document.body.appendChild(tip);
+function showTip(button, text) {
+  if (!tip.hidden && tip.dataset.for === text) { tip.hidden = true; return; }
+  tip.textContent = text;
+  tip.dataset.for = text;
+  tip.hidden = false;
+  const r = button.getBoundingClientRect();
+  tip.style.left = Math.max(8, Math.min(r.left + scrollX - 12, scrollX + innerWidth - tip.offsetWidth - 8)) + 'px';
+  tip.style.top = r.bottom + scrollY + 8 + 'px';
+}
+document.addEventListener('click', e => { if (!e.target.closest('.q')) tip.hidden = true; });
+function addHelp(where, text, inside = false) {
+  const el = typeof where === 'string' ? document.querySelector(where) : where;
+  if (!el) return;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'q';
+  b.textContent = '?';
+  b.title = 'What is this?';
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); showTip(b, text); };
+  if (inside) el.appendChild(b); else el.after(b);
+}
+addHelp('header h1', 'The picture on the left is what Zoom sees. Pick shots on the right; the timer at the top keeps ' +
+        'each part to time. More (top right) shows sound, settings and checks.', true);
+addHelp('.timerIco', 'The meeting’s parts are along the bottom. Press Start as the first speaker begins; Stop gets ' +
+        'the next part ready. The speakers’ screen shows the time left: green, amber in the last minute, red when over.');
+addHelp('.side:last-child .panelHead h2', 'Click a shot to put it on air, or press its number key. What’s on air is ' +
+        'what Zoom sees. The holding screen counts down to the meeting.', true);
+addHelp('#trackTick', 'Auto camera watches the platform and picks the shot: the speaker, the demonstration, the table, ' +
+        'or the whole platform. Picking a shot yourself turns it off; tick it again to let it take over.');
+addHelp('#mediaTick', 'Auto media: when JW Library shows a picture, the camera cuts to Speaker + Monitor; a video or ' +
+        'song goes to Monitor. It cuts back when it’s closed.');
+addHelp('#mixPanel h2', 'Volume for the PC’s speakers, and for Zoom and JW Library on their own. The green line ' +
+        'under each shows the sound level.', true);
 
 // ---------------------------------------------------------------------------
 // Setup progress from MeetingAV.exe (it runs Start-Meeting.ps1 and passes on what it prints).

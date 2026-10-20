@@ -19,6 +19,13 @@ video, and run it all from a tablet.
 2. The first time, it switches on OBS's remote control (close OBS first if it's
    open) and starts OBS minimised by the clock, with the virtual camera on.
 3. Open JW Library and Zoom yourself.
+4. The first time, a **setup guide** walks through the rest: OBS, the camera
+   shots, meeting times, JW Library, the timer screen, following people and the
+   tablet. Settings → App runs it again.
+
+From half an hour before each meeting, a bar at the top says **Ready** - or
+what to sort out, with a button to fix it where Meeting AV can. Tap **?** next
+to anything for a quick explanation.
 
 Meeting AV opens on the holding screen, with a countdown to the meeting. It
 starts with Windows and keeps itself up to date from this repository: when a
