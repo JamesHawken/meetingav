@@ -430,7 +430,10 @@
           <input type="range" id="splitB" min="40" max="95"></label>
         <label>Ignore people below this line (audience heads) <b id="floorVal"></b>
           <input type="range" id="floor" min="30" max="100"></label>
-        <span class="help" style="margin:0">Picking a shot yourself pauses following for 60 seconds.
+        <label>Reader: standing if their head is above this line (table area) <b id="readerLineVal"></b>
+          <input type="range" id="readerLine" min="0" max="90"></label>
+        <span class="help" style="margin:0">For the Reader shot, put the line between a seated head and a
+          standing one at the table. Picking a shot yourself turns following off until you turn it back on.
           JW Library media always takes priority.</span>
       </div>
     </div>
@@ -498,6 +501,7 @@ const ICONS = {
   alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   tablet: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 18h.01"/>',
+  book: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5v-2z"/><path d="M8 7h8M8 11h6"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   list: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="m3 6 1 1 2-2"/><path d="m3 12 1 1 2-2"/><path d="m3 18 1 1 2-2"/>',
   sliders: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
@@ -512,13 +516,15 @@ const SLOTS = {
   demo:    { title: 'Demonstrations',    hint: 'Left of platform',  icon: 'users',   match: n => n.includes('demo') },
   wide:    { title: 'Platform wide',     hint: 'Whole platform',    icon: 'wide',    match: n => n.includes('wide') || n.includes('platform') },
   table:   { title: 'Table',             hint: 'Right of platform', icon: 'table',   match: n => n.includes('table') },
+  reader:  { title: 'Reader',            hint: 'Standing at the table', icon: 'book', match: n => n.includes('reader') || n.includes('lecteur') },
   speaker: { title: 'Speaker',           hint: 'Close-up',          icon: 'mic',     match: n => n.includes('speaker') && !n.includes('monitor') },
   spkmon:  { title: 'Speaker + Monitor', hint: 'Side by side',      icon: 'split',   match: n => n.includes('speaker') && n.includes('monitor') },
   monitor: { title: 'Monitor',           hint: 'Screen only',       icon: 'monitor', match: n => (n.includes('monitor') || n.includes('screen')) && !n.includes('speaker') },
   holding: { title: 'Holding screen',    hint: 'Before the meeting', icon: 'clock',  match: n => /holding|countdown|waiting|welcome|attente|accueil/.test(n) },
 };
+const OPTIONAL_SLOTS = ['reader'];   // shown only when OBS has the scene
 const ROWS = [
-  { label: ['◀ Left', 'Platform', 'Right ▶'], slots: ['demo', 'wide', 'table'] },
+  { label: ['◀ Left', 'Platform', 'Right ▶'], slots: ['demo', 'wide', 'reader', 'table'] },
   { label: ['Speaker & screen'],              slots: ['speaker', 'spkmon', 'monitor'] },
 ];  // The holding screen has its own button on the meeting card.
 // What JW Library is showing → which slot to cut to.
@@ -750,7 +756,7 @@ function layout() {
   const names = state.scenes.slice().sort((a, b) => b.sceneIndex - a.sceneIndex).map(s => s.sceneName);
   const used = new Set(), bySlot = {};
   // Check the most specific slots first so "Speaker + Monitor" isn't grabbed by "Speaker".
-  for (const key of ['holding', 'spkmon', 'demo', 'table', 'wide', 'speaker', 'monitor']) {
+  for (const key of ['holding', 'reader', 'spkmon', 'demo', 'table', 'wide', 'speaker', 'monitor']) {
     const name = names.find(n => !used.has(n) && SLOTS[key].match(n.toLowerCase()));
     if (name) { bySlot[key] = name; used.add(name); }
   }
@@ -801,7 +807,9 @@ function renderShots() {
     box.appendChild(rowLabel(row.label));
     const grid = document.createElement('div');
     grid.className = 'stage';
-    row.slots.forEach(k => grid.appendChild(shotButton(SLOTS[k].title, SLOTS[k].hint, SLOTS[k].icon, bySlot[k])));
+    const slots = row.slots.filter(k => !OPTIONAL_SLOTS.includes(k) || bySlot[k]);
+    grid.style.gridTemplateColumns = `repeat(${slots.length}, 1fr)`;
+    slots.forEach(k => grid.appendChild(shotButton(SLOTS[k].title, SLOTS[k].hint, SLOTS[k].icon, bySlot[k])));
     box.appendChild(grid);
   }
   if (others.length) {
@@ -1311,8 +1319,9 @@ everyMs(500, async () => {
 // Follow people on platform.
 // Once a second a person detector (COCO-SSD, runs in the browser) looks at the platform
 // camera. Each person is placed in a zone by where the middle of their body is:
-//   only left → Demonstrations · only centre → Speaker · only right → Table
-//   more than one zone → Platform wide · nobody → keep the current shot
+//   only left → Demonstrations · only centre → Speaker · only right → Table, or Reader if
+//   someone there is standing (head above the reader line) · more than one zone → Platform wide
+//   nobody → keep the current shot
 // A zone has to hold for 3 s before we cut, and cuts are at least 5 s apart.
 // ---------------------------------------------------------------------------
 const ZONES = [
@@ -1324,6 +1333,7 @@ const track = {
   on: store.get('trackOn', '0') === '1',
   src: store.get('trackSrc', ''),
   splitA: +store.get('splitA', 33), splitB: +store.get('splitB', 67), floor: +store.get('floor', 100),
+  readerLine: +store.get('readerLine', 0),   // in the table area, a head above this is someone standing (0 = off)
   model: null, loading: null, status: '', error: '',
   img: null, people: [], want: null, wantCount: 0, lastSwitchAt: 0, offByPick: false,
 };
@@ -1362,9 +1372,14 @@ function zoneOf(p) {
   return cx < track.splitA ? 'demo' : cx > track.splitB ? 'table' : 'speaker';
 }
 
+// Standing at the table: the top of the person (their head) is above the reader line.
+const standing = p => track.readerLine > 0 && p.y * 100 < track.readerLine;
+
 function decideTrack() {
   const zones = new Set(track.people.map(zoneOf).filter(Boolean));
-  const want = zones.size === 0 ? null : zones.size === 1 ? [...zones][0] : 'wide';
+  let want = zones.size === 0 ? null : zones.size === 1 ? [...zones][0] : 'wide';
+  // The reader stands to read and sits otherwise; anyone standing at the table means Reader.
+  if (want === 'table' && layout().bySlot.reader && track.people.some(p => zoneOf(p) === 'table' && standing(p))) want = 'reader';
   if (want !== track.want) { track.want = want; track.wantCount = 0; }
   track.wantCount++;
 
@@ -1404,6 +1419,12 @@ function drawTrack() {
   g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 2; g.setLineDash([6, 6]);
   [bounds[1], bounds[2]].forEach(x => { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); });
   g.setLineDash([]);
+  if (track.readerLine > 0) {   // across the table area only
+    const y = track.readerLine / 100 * H;
+    g.strokeStyle = 'rgb(244,114,182)'; g.setLineDash([10, 6]);
+    g.beginPath(); g.moveTo(bounds[2], y); g.lineTo(W, y); g.stroke(); g.setLineDash([]);
+    g.fillStyle = 'rgb(244,114,182)'; g.fillText('Reader (standing)', bounds[2] + 8, y - 6);
+  }
   if (track.floor < 100) {
     const y = track.floor / 100 * H;
     g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, y, W, H - y);
@@ -1411,7 +1432,7 @@ function drawTrack() {
   }
   track.people.forEach(p => {
     const z = zoneOf(p), zone = ZONES.find(q => q.key === z);
-    g.strokeStyle = zone ? `rgb(${zone.color})` : 'rgba(255,255,255,.4)';
+    g.strokeStyle = z === 'table' && standing(p) ? 'rgb(244,114,182)' : zone ? `rgb(${zone.color})` : 'rgba(255,255,255,.4)';
     g.lineWidth = 3;
     g.strokeRect(p.x * W, p.y * H, p.w * W, p.h * H);
   });
@@ -1444,11 +1465,13 @@ function renderTrack() {
   $('splitAVal').textContent = track.splitA + '%';
   $('splitBVal').textContent = track.splitB + '%';
   $('floorVal').textContent = track.floor >= 100 ? 'off' : track.floor + '%';
+  $('readerLineVal').textContent = track.readerLine <= 0 ? 'off' : track.readerLine + '%';
 }
 
 function renderTrackRules() {
   const rows = [['users', 'Left only', 'demo'], ['mic', 'Centre only', 'speaker'],
-                ['table', 'Right only', 'table'], ['wide', 'More than one area', 'wide']];
+                ['table', 'Right only, sitting', 'table'], ['book', 'Right only, standing', 'reader'],
+                ['wide', 'More than one area', 'wide']];
   $('trackRules').innerHTML = rows.map(([ic, where]) => `${icon(ic)}<span>${where} → <b></b></span>`).join('');
   $('trackRules').querySelectorAll('b').forEach((b, i) => { b.textContent = SLOTS[rows[i][2]].title; });
 }
@@ -1467,7 +1490,7 @@ function setTrackOn(on) {
   store.set('trackOn', on ? '1' : '0');
 }
 $('trackBtn').onclick = () => { setTrackOn(!track.on); renderTrack(); };
-['splitA', 'splitB', 'floor'].forEach(id => {
+['splitA', 'splitB', 'floor', 'readerLine'].forEach(id => {
   const el = $(id);
   el.value = track[id];
   el.oninput = () => {
@@ -1477,6 +1500,7 @@ $('trackBtn').onclick = () => { setTrackOn(!track.on); renderTrack(); };
       $('splitA').value = track.splitA; $('splitB').value = track.splitB;
     }
     store.set('splitA', track.splitA); store.set('splitB', track.splitB); store.set('floor', track.floor);
+    store.set('readerLine', track.readerLine);
     drawTrack(); renderTrack();
   };
 });
@@ -1710,6 +1734,7 @@ async function runCheck() {
   for (const [key, slot] of Object.entries(SLOTS)) {
     const scene = bySlot[key];
     if (!scene) {
+      if (OPTIONAL_SLOTS.includes(key)) continue;
       if (key === 'holding') add('warn', 'No holding screen', 'Needed for the countdown.', ['Create it', createHolding]);
       else add('bad', `${slot.title}: no scene found`, 'Add a scene with this name in OBS.');
       continue;

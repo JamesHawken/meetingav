@@ -31,6 +31,7 @@ Shots are found by their scene names in OBS (not case-sensitive):
 | Demonstrations    | `demo`                       |
 | Platform wide     | `wide` or `platform`         |
 | Table             | `table`                      |
+| Reader (optional) | `reader` or `lecteur`        |
 | Speaker           | `speaker`                    |
 | Speaker + Monitor | `speaker` and `monitor`      |
 | Monitor           | `monitor` or `screen`        |
@@ -49,7 +50,10 @@ Meeting Camera makes one.
   to *Monitor*, and closing it goes back to the previous shot. `A` turns this
   on or off.
 - **Follow people:** switches between Demonstrations, Speaker, Table and
-  Platform wide depending on where people stand on the platform.
+  Platform wide depending on where people stand on the platform. With a Reader
+  scene, someone standing at the table cuts to Reader and someone sitting to
+  Table: under Follow people → *Adjust…*, set the reader line between a seated
+  head and a standing one.
 - **Auto-start:** at the meeting time, turns the camera on and cuts from the
   holding screen to Platform wide. Set the times under *Change times*.
 - **Grid:** just the shots, big. Swipe right (or tap the left dot) for the shot
