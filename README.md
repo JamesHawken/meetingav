@@ -44,8 +44,8 @@ Meeting Camera makes one.
 
 - **Shots:** click one, or press `1`–`9`. Picking a shot yourself turns
   *Follow people* off until you switch it back on.
-- **Start / Stop camera:** turns the OBS virtual camera (what Zoom sees) on or off.
-  `V` does the same.
+- **Start camera:** turns on the OBS virtual camera (what Zoom sees); the button
+  only shows while it's off. `V` turns it on or off.
 - **JW Library media:** a picture cuts to *Speaker + Monitor*, a video or song
   to *Monitor*, and closing it goes back to the previous shot. `A` turns this
   on or off.
@@ -64,7 +64,8 @@ Meeting Camera makes one.
   part, press **Start** as the speaker begins, and the speakers' screen counts
   down: green, amber in the last minute, red and counting up once over time.
   **Stop** gets the next part ready. With no part loaded it shows the time of
-  day. Switch **Screen** on to show it; pick which screen under Settings → Timer.
+  day. It sits at the top; switch **Screen** on to show it, and pick which screen
+  under Settings → Timer.
 
 ## Tablet or phone
 

@@ -100,7 +100,8 @@
   /* Grid view: only the shots, as big as the screen allows. Swipe right for the shot on air, full screen,
      and left for the sound.
      It covers the whole screen; warnings and messages stay on top of it. */
-  body.gridMode main > header, body.gridMode #setupCard, body.gridMode .top, body.gridMode .cards { display: none; }
+  body.gridMode main > header, body.gridMode #setupCard, body.gridMode #timerPanel, body.gridMode .top,
+  body.gridMode .cards { display: none; }
   body.gridMode { overflow: hidden; }
   #gridView { position: fixed; inset: 0; z-index: 5; background: var(--bg); }
   body.gridMode .alerts, body.gridMode .banner { position: fixed; z-index: 20; margin: 0;
@@ -148,7 +149,7 @@
   .tile.active.live .name { background: var(--live); }
 
   /* Sound: one row each - mute, name, volume with a level meter under it, percentage. */
-  .mixer { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .mixer { display: flex; flex-direction: column; gap: 6px; }
   .mix { display: grid; grid-template-columns: 34px 88px 1fr 64px; align-items: center; gap: 8px; font-size: 14px; }
   .mix .mute { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
   .mix .mute svg.i { width: 18px; height: 18px; }
@@ -185,27 +186,33 @@
     .mixer.big .slide { grid-area: slide; } .mixer.big .val { grid-area: val; font-size: 16px; }
   }
 
-  /* Timer card: the time as the speakers see it, part lengths, and the controls. */
-  .timerBig { font-size: 44px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--muted); }
+  /* Timer, under the shots: the time with its buttons, the meeting's parts, and any other length. */
+  .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  /* Timer: a slim bar above everything - the time and its buttons, then the meeting's parts in a row. */
+  .timerBar { margin-bottom: 16px; padding: 12px 16px; }
+  .timerTop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .timerIco { color: var(--muted); display: grid; }
+  .timerTime { flex: 1; min-width: 150px; }
+  .timerBig { font-size: 34px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; color: var(--muted); }
   .timerBig.ok { color: var(--ok); } .timerBig.warn { color: var(--warn); } .timerBig.over { color: var(--live); }
   .timerBig.paused { opacity: .55; }
   .timerLabel { font-size: 13px; color: var(--muted); min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .timerParts { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 300px; overflow-y: auto; }
-  .timerParts button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; text-align: left; font-size: 14px; }
-  .timerParts button .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .timerTop button { padding: 10px 12px; flex: none; display: flex; align-items: center; gap: 6px; }
+  .timerTop .timerGo { background: var(--accent); color: #fff; font-weight: 700; min-width: 96px; justify-content: center; }
+  .timerTop .timerGo.running { background: var(--live); }
+  .timerTop .timerGo:disabled { background: var(--btn); color: var(--muted); }
+  .timerOther { display: flex; align-items: center; gap: 6px; margin-left: 8px; font-size: 13px; color: var(--muted); }
+  .timerOther input { width: 60px; padding: 8px; text-align: center; font-variant-numeric: tabular-nums; }
+  .timerTop .toggle { margin-left: 8px; }
+  .timerParts { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; padding-bottom: 4px; align-items: center;
+                 scrollbar-width: thin; }
+  .timerParts:empty { display: none; }
+  .timerParts button { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 13px; border-radius: 8px; max-width: 260px; }
+  .timerParts button .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .timerParts button .m { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
   .timerParts button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .timerParts button.on .m { color: inherit; }
-  .timerParts .week { font-size: 12px; color: var(--muted); margin: 2px 2px 0; }
-  .timerOther { font-size: 12px; color: var(--muted); margin-top: 10px; }
-  .timerPresets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 4px; }
-  .timerPresets button { padding: 8px 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .timerPresets button.on { background: var(--accent-soft); color: var(--accent); }
-  .timerActions { margin-top: 10px; }
-  .timerActions button { padding: 10px 14px; }
-  .timerActions .timerGo { flex: 1; justify-content: center; background: var(--accent); color: #fff; font-weight: 700; }
-  .timerActions .timerGo.running { background: var(--live); }
-  .timerActions .timerGo:disabled { background: var(--btn); color: var(--muted); }
+  .timerParts .week { flex: none; font-size: 12px; color: var(--muted); margin-right: 4px; white-space: nowrap; }
 
   .items { display: flex; flex-direction: column; gap: 8px; }
   .item { display: flex; justify-content: space-between; align-items: center; text-align: left; gap: 10px; }
@@ -359,6 +366,23 @@
     <div class="checks" id="setupSteps"></div>
   </section>
 
+  <section class="panel timerBar" id="timerPanel" hidden>
+    <div class="timerTop">
+      <span class="timerIco"><i data-icon="timer"></i></span>
+      <div class="timerTime"><div class="timerBig" id="timerBig">—</div><div class="timerLabel" id="timerLabel"></div></div>
+      <button id="timerStart" class="timerGo"></button>
+      <button id="timerMinus" title="One minute less">−1</button>
+      <button id="timerPlus" title="One minute more">+1</button>
+      <button id="timerReset" title="Back to the start of the part"><i data-icon="undo"></i></button>
+      <span class="timerOther" title="Any other length">
+        <input id="timerMins" type="number" min="1" max="120" value="5" inputmode="numeric"><span>min</span>
+        <button id="timerLoad">Load</button>
+      </span>
+      <button class="toggle" id="timerScreenBtn" role="switch" title="Show the timer on a screen the speakers can see (Settings → Timer picks which)">Screen<span class="switch"></span></button>
+    </div>
+    <div class="timerParts" id="timerParts"></div>
+  </section>
+
   <div class="top">
     <section class="panel">
       <div class="preview">
@@ -367,19 +391,24 @@
         <span class="onAir" id="onAir"></span>
       </div>
       <button class="camBtn" id="camBtn" disabled></button>
-      <div class="mixer" id="mixer" hidden>
-        <div class="mix" data-target="system"><button class="mute"></button><span class="name">Speakers</span>
-          <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
-        <div class="mix" data-target="zoom"><button class="mute"></button><span class="name">Zoom</span>
-          <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
-        <div class="mix" data-target="jw"><button class="mute"></button><span class="name">JW Library</span>
-          <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
-      </div>
     </section>
-    <section class="panel">
-      <div class="panelHead"><h2><i data-icon="film"></i>Shots</h2><span class="hint" id="shotsHint"></span></div>
-      <div id="shots"><div class="empty">Waiting for OBS…</div></div>
-    </section>
+    <div class="side">
+      <section class="panel">
+        <div class="panelHead"><h2><i data-icon="film"></i>Shots</h2><span class="hint" id="shotsHint"></span></div>
+        <div id="shots"><div class="empty">Waiting for OBS…</div></div>
+      </section>
+      <section class="panel" id="mixPanel" hidden>
+        <div class="panelHead"><h2><i data-icon="volume"></i>Sound</h2></div>
+        <div class="mixer">
+          <div class="mix" data-target="system"><button class="mute"></button><span class="name">Speakers</span>
+            <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <div class="mix" data-target="zoom"><button class="mute"></button><span class="name">Zoom</span>
+            <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <div class="mix" data-target="jw"><button class="mute"></button><span class="name">JW Library</span>
+            <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+        </div>
+      </section>
+    </div>
   </div>
 
   <div class="cards">
@@ -422,25 +451,6 @@
         <div class="text"><div class="name" id="trackName">—</div><div class="hint" id="trackHint"></div></div>
       </div>
       <button class="link" data-open="track">Adjust…</button>
-    </section>
-
-    <section class="panel" id="timerPanel" hidden>
-      <div class="panelHead">
-        <h2><i data-icon="timer"></i>Timer</h2>
-        <button class="toggle" id="timerScreenBtn" role="switch" title="Show the timer on a screen the speakers can see">Screen<span class="switch"></span></button>
-      </div>
-      <div class="timerBig" id="timerBig">—</div>
-      <div class="timerLabel" id="timerLabel"></div>
-      <div class="timerParts" id="timerParts"></div>
-      <div class="timerOther">Other length (minutes)</div>
-      <div class="timerPresets" id="timerPresets"></div>
-      <div class="actions timerActions">
-        <button id="timerStart" class="timerGo"></button>
-        <button id="timerMinus" title="One minute less">−1</button>
-        <button id="timerPlus" title="One minute more">+1</button>
-        <button id="timerReset" title="Back to the start of the part"><i data-icon="undo"></i></button>
-      </div>
-      <button class="link" data-open="timer">Which screen…</button>
     </section>
 
     <section class="panel" id="remoteNote" hidden>
@@ -857,10 +867,10 @@ function setStatus(on, text) {
 
 function setCam(on) {
   state.camOn = on;
-  const btn = $('camBtn');
+  const btn = $('camBtn');   // only needed to start it: once on, it stays on
   btn.disabled = !connected;
-  btn.classList.toggle('live', on);
-  btn.innerHTML = on ? icon('videoOff') + 'Stop camera' : icon('video') + 'Start camera';
+  btn.hidden = on;
+  btn.innerHTML = icon('video') + 'Start camera';
   $('badge').classList.toggle('live', on);
   $('badge').textContent = on ? '● LIVE TO ZOOM' : 'OFF AIR';
   renderGrid();
@@ -1070,7 +1080,7 @@ document.querySelectorAll('.mix').forEach(row => {
 });
 
 if (inApp) {
-  $('mixer').hidden = false;
+  $('mixPanel').hidden = false;
   let mixBusy = false;
   everyMs(200, async () => {
     const wanted = Date.now() < tabletsWantSound;
@@ -1090,7 +1100,6 @@ if (inApp) {
 // Timer, like OnlyT: load a part's length, start it as the speaker begins, and a screen the
 // speakers can see counts down. The app keeps the time, so this card and that screen agree.
 // ---------------------------------------------------------------------------
-const TIMER_PRESETS = [1, 2, 3, 4, 5, 6, 7, 10, 15, 30];   // minutes
 let timer = null, timerOffset = 0;
 
 const timerLeft = () => !timer ? 0 : timer.running ? timer.endsAt - (Date.now() + timerOffset) : timer.left;
@@ -1110,7 +1119,6 @@ function renderTimer() {
   go.classList.toggle('running', timer.running);
   go.innerHTML = icon(timer.running ? 'pause' : 'play') + (timer.running ? 'Stop' : 'Start');
   $('timerMinus').disabled = $('timerPlus').disabled = $('timerReset').disabled = !loaded;
-  document.querySelectorAll('#timerPresets button').forEach(b => b.classList.toggle('on', loaded && !timer.label && +b.dataset.min * 60000 === timer.length));
   document.querySelectorAll('#timerParts button').forEach(b => b.classList.toggle('on', loaded && b.dataset.title === timer.label));
   const sw = $('timerScreenBtn');
   sw.classList.toggle('on', timer.shown);
@@ -1144,7 +1152,7 @@ async function loadTimerParts() {
       const r = await appFetch(`/timer/parts?year=${y}&week=${w}`);
       if (r.error) throw new Error(r.error);
       timerParts = r.parts; note = `Midweek meeting · ${r.week}`;
-    } catch (err) { timerParts = []; note = 'Couldn’t get this week’s parts from wol.jw.org — use the lengths below.'; }
+    } catch (err) { timerParts = []; note = 'Couldn’t get this week’s parts from wol.jw.org — type a length below.'; }
   }
   partsFor = timerParts.length ? key : '';   // try again later if it failed
   const box = $('timerParts');
@@ -1183,14 +1191,13 @@ async function renderTimerScreens() {
 
 if (inApp) {
   $('timerPanel').hidden = false;
-  TIMER_PRESETS.forEach(m => {
-    const b = document.createElement('button');
-    b.dataset.min = m;
-    b.textContent = m;
-    b.title = `${m} minute part`;
-    b.onclick = () => timerDo({ action: 'set', secs: m * 60, label: '' });
-    $('timerPresets').appendChild(b);
-  });
+  // Any other length: type the minutes and load it (Enter works too).
+  const loadMins = () => {
+    const m = Math.round(+$('timerMins').value);
+    if (m >= 1 && m <= 120) timerDo({ action: 'set', secs: m * 60, label: '' });
+  };
+  $('timerLoad').onclick = loadMins;
+  $('timerMins').onkeydown = e => { if (e.key === 'Enter') loadMins(); };
   $('timerStart').onclick = async () => {
     if (!(timer && timer.running)) return timerDo({ action: 'start' });
     const next = nextPart();
@@ -1288,8 +1295,8 @@ function renderGridBar() {
   const slot = Object.entries(layout().bySlot).find(([, n]) => n === state.current);
   $('gOnAir').textContent = !connected ? $('statusText').textContent : slot ? SLOTS[slot[0]].title : state.current || '';
   $('gCam').disabled = !connected;
-  $('gCam').classList.toggle('live', state.camOn);
-  $('gCam').innerHTML = (state.camOn ? icon('videoOff') : icon('video')) + `<span class="lbl">${state.camOn ? 'Stop camera' : 'Start camera'}</span>`;
+  $('gCam').hidden = state.camOn;
+  $('gCam').innerHTML = icon('video') + '<span class="lbl">Start camera</span>';
   $('fBadge').className = state.camOn ? 'live' : '';
   $('fBadge').textContent = $('gBadge').textContent;
   $('fName').textContent = $('gOnAir').textContent;
