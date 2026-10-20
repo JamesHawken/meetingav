@@ -6,6 +6,7 @@
 //   - Serves the page to tablets on the hall Wi-Fi (port 8080, or the next free one, remembered)
 //   - Tells the page OBS's websocket port and password, so nobody has to type them
 //   - Sets the volume of the speakers, Zoom and JW Library (a small mixer in the page)
+//   - Keeps a timer for each part and shows it big on a screen the speakers can see (like OnlyT)
 //   - Shows the page what JW Library's second display is showing (OBS only captures a screen
 //     while its scene is on air, so it can't be used to spot media starting)
 // Closing the Meeting Camera window quits the app.
@@ -121,6 +122,7 @@ static class MeetingCamera
 
         MakeDesktopShortcut();
         OpenWindow();
+        ShowTimerScreen("auto", true);   // where it was last time, if that screen is still there
         if (setup) RunSetup(SetupMeeting);
         Application.Run();
         GC.KeepAlive(single);
@@ -205,12 +207,18 @@ static class MeetingCamera
     {
         string userData = Path.Combine(DataDir, "WebView2");
         MoveEdgeStorage(userData);
-        CoreWebView2Environment.SetLoaderDllFolderPath(WebView2Dir);
+        LoaderReady();
         AppWindow w = new AppWindow(Url, userData, new Icon(new MemoryStream(Resource("MeetingCamera.ico"))));
         w.Failed += () => { w.Close(); Window = null; OpenInEdge(); };   // no WebView2 on this PC
         w.FormClosed += (s, e) => { if (!w.HasFailed) Quit(); };
         Window = w;
         w.Show();
+    }
+
+    static bool loaderSet;
+    static void LoaderReady()
+    {
+        if (!loaderSet) { CoreWebView2Environment.SetLoaderDllFolderPath(WebView2Dir); loaderSet = true; }
     }
 
     // Started again while running: the running copy shows its window.
@@ -372,6 +380,206 @@ static class MeetingCamera
                    string.Join(",", SetupLines.ConvertAll(Json)) + "]}";
     }
 
+
+    // ---- Timer --------------------------------------------------------------------
+    // Like OnlyT: the page loads a part's length and starts it as the speaker begins; the timer
+    // screen (its own window filling a screen the speakers can see) counts down. The time is kept
+    // here so the page and the timer screen always agree.
+
+    static readonly object TimerLock = new object();
+    static bool TimerRunning;
+    static long TimerEndsAt;   // while running: when it reaches 0:00 (ms since 1970)
+    static long TimerLeft;     // while stopped: what's left, below 0 once over time (ms)
+    static long TimerLength;   // the part's length (ms); 0 = no part loaded, the screen shows the time of day
+    static string TimerLabel = "";
+    static TimerWindow TimerForm;
+    static string TimerScreen = "";   // the screen it's on, while shown
+    static string TimerScreenFile { get { return Path.Combine(DataDir, "timer-screen.txt"); } }
+
+    static long NowMs() { return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); }
+
+    static string TimerJson()
+    {
+        lock (TimerLock)
+            return "{\"running\":" + (TimerRunning ? "true" : "false") + ",\"endsAt\":" + TimerEndsAt +
+                   ",\"left\":" + TimerLeft + ",\"length\":" + TimerLength + ",\"label\":" + Json(TimerLabel) +
+                   ",\"now\":" + NowMs() + ",\"shown\":" + (TimerScreen != "" ? "true" : "false") +
+                   ",\"screen\":" + Json(TimerScreen) + "}";
+    }
+
+    // set (load a part of secs), start, stop, reset (back to the part's length), add (secs, may be
+    // negative), clear (no part: the time of day).
+    static void TimerDo(string action, int secs, string label)
+    {
+        lock (TimerLock)
+        {
+            long now = NowMs(), left = TimerRunning ? TimerEndsAt - now : TimerLeft;
+            switch (action)
+            {
+                case "set": TimerRunning = false; TimerLength = TimerLeft = secs * 1000L; TimerLabel = label ?? ""; break;
+                case "start": if (!TimerRunning && TimerLength > 0) { TimerEndsAt = now + left; TimerRunning = true; } break;
+                case "stop": if (TimerRunning) { TimerLeft = left; TimerRunning = false; } break;
+                case "reset": TimerRunning = false; TimerLeft = TimerLength; break;
+                case "add":
+                    if (TimerLength == 0) break;
+                    TimerLength = Math.Max(60000, TimerLength + secs * 1000L);
+                    if (TimerRunning) TimerEndsAt += secs * 1000L; else TimerLeft += secs * 1000L;
+                    break;
+                case "clear": TimerRunning = false; TimerLength = TimerLeft = 0; TimerLabel = ""; break;
+            }
+        }
+    }
+
+    // Screens for the timer, with which one JW Library uses (not a good choice) and the main one.
+    static string ScreensJson()
+    {
+        Screen jw = JwTargetScreen();
+        List<string> list = new List<string>();
+        int n = 0;
+        foreach (Screen sc in Screen.AllScreens)
+            list.Add("{\"name\":" + Json(sc.DeviceName) + ",\"number\":" + (++n) + ",\"main\":" + (sc.Primary ? "true" : "false") +
+                     ",\"jw\":" + (jw != null && jw.DeviceName == sc.DeviceName ? "true" : "false") +
+                     ",\"w\":" + sc.Bounds.Width + ",\"h\":" + sc.Bounds.Height + "}");
+        string saved = "";
+        try { if (File.Exists(TimerScreenFile)) saved = File.ReadAllText(TimerScreenFile).Trim(); } catch { }
+        return "{\"screens\":[" + string.Join(",", list) + "],\"saved\":" + Json(saved) + "}";
+    }
+
+    // Shows the timer screen on the named screen ("" hides it). "auto": the one used last time, or
+    // else a screen that's neither the main one nor JW Library's. Called on the UI thread.
+    // Returns false if there's no such screen.
+    static bool ShowTimerScreen(string name, bool onlyIfSaved = false)
+    {
+        if (name == "")
+        {
+            if (TimerForm != null) TimerForm.Close();
+            TimerForm = null; TimerScreen = "";
+            try { File.WriteAllText(TimerScreenFile, ""); } catch { }
+            return true;
+        }
+        string saved = "";
+        try { if (File.Exists(TimerScreenFile)) saved = File.ReadAllText(TimerScreenFile).Trim(); } catch { }
+        if (name == "auto")
+        {
+            if (onlyIfSaved && saved == "") return false;
+            name = saved;
+            Screen jw = JwTargetScreen();
+            if (Array.Find(Screen.AllScreens, sc => sc.DeviceName == name) == null)
+            {
+                Screen spare = Array.Find(Screen.AllScreens, sc => !sc.Primary && (jw == null || sc.DeviceName != jw.DeviceName));
+                if (spare == null || onlyIfSaved) return false;
+                name = spare.DeviceName;
+            }
+        }
+        Screen target = Array.Find(Screen.AllScreens, sc => sc.DeviceName == name);
+        if (target == null) return false;
+        try { File.WriteAllText(TimerScreenFile, name); } catch { }
+        if (TimerForm != null && !TimerForm.IsDisposed)
+        {
+            if (TimerScreen != name) TimerForm.MoveTo(target);
+        }
+        else
+        {
+            try
+            {
+                LoaderReady();
+                TimerForm = new TimerWindow(Url + "timer-screen", Path.Combine(DataDir, "WebView2"), target);
+                TimerForm.FormClosed += (s, e) => { if (TimerForm == s) { TimerForm = null; TimerScreen = ""; } };
+                TimerForm.Show();
+            }
+            catch { TimerForm = null; return false; }
+        }
+        TimerScreen = name;
+        return true;
+    }
+
+    // Runs on the UI thread (the timer window lives there) and waits for the answer.
+    static T OnUi<T>(Func<T> f)
+    {
+        return (T)UiThread.Invoke(f);
+    }
+
+    // ---- Meeting parts, for the timer ------------------------------------------------
+    // A midweek meeting's parts and their lengths come from that week's Life and Ministry Meeting
+    // Workbook on wol.jw.org, as OnlyT does. Kept once fetched, so it also works offline at the hall.
+
+    static string PartsJson(int year, int week)
+    {
+        string file = Path.Combine(DataDir, "parts-" + year + "-" + week + ".json");
+        try { if (File.Exists(file)) return File.ReadAllText(file); } catch { }
+        try
+        {
+            string json = FetchParts(year, week);
+            File.WriteAllText(file, json);
+            return json;
+        }
+        catch (Exception e)
+        {
+            return "{\"error\":" + Json("Couldn't get the parts from wol.jw.org (" + e.Message + ")") + "}";
+        }
+    }
+
+    static string FetchParts(int year, int week)
+    {
+        // The week's page links to its workbook article first, then the Watchtower.
+        string page = Download("https://wol.jw.org/en/wol/meetings/r1/lp-e/" + year + "/" + week);
+        Match doc = Regex.Match(page, "href=\"(/en/wol/d/r1/lp-e/\\d+)\"");
+        if (!doc.Success) throw new Exception("no workbook for that week");
+        string weekName = CleanText(Regex.Match(page, "<title>(.*?)(&mdash;|—)", RegexOptions.Singleline).Groups[1].Value);
+        string article = Download("https://wol.jw.org" + doc.Groups[1].Value);
+        int a = article.IndexOf("<article"), b = article.IndexOf("</article>");
+        if (a >= 0 && b > a) article = article.Substring(a, b - a);
+
+        // A part is a heading "3. Bible Reading" followed by "(4 min.) ...", or a heading with the
+        // length in it: "Song 21 and Prayer | Opening Comments (1 min.)".
+        List<string> parts = new List<string>();
+        string pending = null;
+        foreach (Match m in Regex.Matches(article, "<(h[1-6])[^>]*>(.*?)</\\1>|<p[^>]*>(.*?)</p>", RegexOptions.Singleline))
+        {
+            bool heading = m.Groups[1].Success;
+            string text = CleanText(heading ? m.Groups[2].Value : m.Groups[3].Value);
+            if (text == "") continue;
+            Match length = Regex.Match(text, "\\((\\d+) min\\.\\)");
+            if (heading)
+            {
+                pending = null;
+                if (Regex.IsMatch(text, "^\\d+\\.\\s")) pending = Regex.Replace(text, "\\s*\\(\\d+ min\\.\\)\\s*$", "");
+                else if (length.Success)
+                    foreach (string piece in text.Split('|'))
+                        if (piece.Contains(length.Value)) parts.Add(Part(piece.Replace(length.Value, "").Trim(), length));
+                if (pending != null && length.Success) { parts.Add(Part(pending, length)); pending = null; }
+            }
+            else if (pending != null && text.StartsWith(length.Success ? length.Value : "\u0001"))
+            {
+                parts.Add(Part(pending, length));
+                pending = null;
+            }
+        }
+        if (parts.Count == 0) throw new Exception("no parts found in the workbook");
+        return "{\"week\":" + Json(weekName) + ",\"parts\":[" + string.Join(",", parts) + "]}";
+    }
+
+    static string Part(string title, Match length)
+    {
+        return "{\"title\":" + Json(title) + ",\"min\":" + length.Groups[1].Value + "}";
+    }
+
+    static string CleanText(string html)
+    {
+        string t = WebUtility.HtmlDecode(Regex.Replace(html, "<[^>]+>", ""));
+        return Regex.Replace(t.Replace("\u200b", ""), "\\s+", " ").Trim();
+    }
+
+    static string Download(string url)
+    {
+        ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+        HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+        req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MeetingCamera";
+        req.Timeout = 15000;
+        using (WebResponse resp = req.GetResponse())
+        using (StreamReader r = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+            return r.ReadToEnd();
+    }
 
     // ---- Sound ------------------------------------------------------------------
     // Windows' own volume (the default speakers), and Zoom's and JW Library's on their own as in
@@ -786,10 +994,10 @@ static class MeetingCamera
         { ".png", "image/png" }, { ".webmanifest", "application/manifest+json" },
     };
 
-    static byte[] Page()
+    static byte[] Page(string file = "obs-remote.html")
     {
-        string local = Path.Combine(AppDir, "obs-remote.html");
-        return File.Exists(local) ? File.ReadAllBytes(local) : Resource("obs-remote.html");
+        string local = Path.Combine(AppDir, file);
+        return File.Exists(local) ? File.ReadAllBytes(local) : Resource(file);
     }
 
     static string Json(string s)
@@ -843,6 +1051,8 @@ static class MeetingCamera
 
             if (path == "/" || path == "/index.html")
                 Send(stream, "200 OK", "text/html; charset=utf-8", Page());
+            else if (path == "/timer-screen")
+                Send(stream, "200 OK", "text/html; charset=utf-8", Page("timer.html"));
             else if (path.StartsWith("/lib/") && (body = LibFile(path.Substring(1))) != null)
             {
                 string type;
@@ -880,6 +1090,30 @@ static class MeetingCamera
                 RunSetup(m.Success ? m.Groups[1].Value : null);
                 SendJson(stream, SetupJson());
             }
+            else if (path == "/timer" && local)
+                SendJson(stream, TimerJson());
+            else if (path == "/timer/set" && local)
+            {
+                Match a = Regex.Match(query, "action=(\\w+)"), n = Regex.Match(query, "secs=(-?\\d+)"), l = Regex.Match(query, "label=([^&]*)");
+                TimerDo(a.Groups[1].Value, n.Success ? int.Parse(n.Groups[1].Value) : 0,
+                        l.Success ? Uri.UnescapeDataString(l.Groups[1].Value.Replace('+', ' ')) : null);
+                SendJson(stream, TimerJson());
+            }
+            else if (path == "/timer/show" && local)
+            {
+                Match m = Regex.Match(query, "screen=([^&]*)");
+                string name = m.Success ? Uri.UnescapeDataString(m.Groups[1].Value) : "";
+                OnUi(() => ShowTimerScreen(name));
+                SendJson(stream, TimerJson());
+            }
+            else if (path == "/timer/parts" && local)
+            {
+                Match y = Regex.Match(query, "year=(\\d{4})"), w = Regex.Match(query, "week=(\\d{1,2})");
+                if (y.Success && w.Success) SendJson(stream, PartsJson(int.Parse(y.Groups[1].Value), int.Parse(w.Groups[1].Value)));
+                else Send(stream, "400 Bad Request", "text/plain", Encoding.ASCII.GetBytes("year and week needed"));
+            }
+            else if (path == "/screens" && local)
+                SendJson(stream, OnUi(() => ScreensJson()));
             else if (path == "/audio" && local)
                 SendJson(stream, AudioJson());
             else if (path == "/audio/set" && local)
@@ -928,6 +1162,42 @@ static class MeetingCamera
         stream.Write(bytes, 0, bytes.Length);
         stream.Write(body, 0, body.Length);
     }
+}
+
+// The timer screen: a borderless window filling a screen the speakers can see, showing
+// timer.html. It never takes the keyboard from the window being used.
+class TimerWindow : Form
+{
+    readonly WebView2 view = new WebView2 { Dock = DockStyle.Fill };
+
+    public TimerWindow(string url, string userData, Screen screen)
+    {
+        Text = "Meeting Camera timer";
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        BackColor = Color.Black;
+        StartPosition = FormStartPosition.Manual;
+        Bounds = screen.Bounds;
+        view.DefaultBackgroundColor = Color.Black;
+        Controls.Add(view);
+        Load += async (s, e) =>
+        {
+            try
+            {
+                CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, userData);
+                await view.EnsureCoreWebView2Async(env);
+                view.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                view.CoreWebView2.Settings.IsStatusBarEnabled = false;
+                view.CoreWebView2.ProcessFailed += (o, a) => { try { view.CoreWebView2.Reload(); } catch { } };
+                view.Source = new Uri(url);
+            }
+            catch { Close(); }
+        };
+    }
+
+    public void MoveTo(Screen screen) { Bounds = screen.Bounds; }
+
+    protected override bool ShowWithoutActivation { get { return true; } }
 }
 
 // Meeting Camera's own window: the page in a WebView2 (Edge's engine, part of Windows), so it has

@@ -59,6 +59,12 @@ Meeting Camera makes one.
 - **Grid:** just the shots, big. Swipe right (or tap the left dot) for the shot
   on air, full screen.
 - **Check:** one list of everything that's ready or needs fixing.
+- **Timer** (like OnlyT): the card lists the next meeting's parts, the midweek
+  one's from that week's workbook on wol.jw.org (kept for offline use). Tap a
+  part, press **Start** as the speaker begins, and the speakers' screen counts
+  down: green, amber in the last minute, red and counting up once over time.
+  **Stop** gets the next part ready. With no part loaded it shows the time of
+  day. Switch **Screen** on to show it; pick which screen under Settings → Timer.
 
 ## Tablet or phone
 
@@ -73,7 +79,7 @@ steps 2–3 again.
 ## Building
 
 Run `build.bat`. It uses the C# compiler that comes with Windows, so there's
-nothing to install, and it builds `obs-remote.html`, `Start-Meeting.ps1`, `lib/`
+nothing to install, and it builds `obs-remote.html`, `timer.html`, `Start-Meeting.ps1`, `lib/`
 and `webview2/` into `MeetingCamera.exe`. A copy of `obs-remote.html` placed next
 to the exe is used instead of the built-in one, which helps when trying out
 changes.
@@ -82,6 +88,7 @@ changes.
 |--------------------|-----------------------------------------------------------------|
 | `MeetingCamera.cs` | The app: its window, the tablet server, JW Library detection    |
 | `obs-remote.html`  | The control page, on the PC and on tablets                      |
+| `timer.html`       | The timer screen the speakers see                               |
 | `Start-Meeting.ps1`| Gets OBS ready (remote control on, started with the virtual camera) |
 | `lib/`             | Person detector, QR codes, tablet app icons                     |
 | `webview2/`        | Microsoft WebView2, which shows the page in the app's own window |

@@ -47,7 +47,7 @@
   .dot.on { background: var(--ok); }
   /* Everything needed during the meeting fits on one screen: picture + shots, then status cards. */
   .top { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start; }
-  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 16px; }
   @media (max-width: 900px) { .top, .cards { grid-template-columns: 1fr; } }
   .cards .panel { display: flex; flex-direction: column; }
   .cards .link { margin-top: auto; padding-top: 10px; align-self: flex-start; }
@@ -184,6 +184,28 @@
     .mixer.big .mute { grid-area: mute; width: 60px; height: 60px; } .mixer.big .name { grid-area: name; }
     .mixer.big .slide { grid-area: slide; } .mixer.big .val { grid-area: val; font-size: 16px; }
   }
+
+  /* Timer card: the time as the speakers see it, part lengths, and the controls. */
+  .timerBig { font-size: 44px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .timerBig.ok { color: var(--ok); } .timerBig.warn { color: var(--warn); } .timerBig.over { color: var(--live); }
+  .timerBig.paused { opacity: .55; }
+  .timerLabel { font-size: 13px; color: var(--muted); min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .timerParts { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 300px; overflow-y: auto; }
+  .timerParts button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; text-align: left; font-size: 14px; }
+  .timerParts button .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .timerParts button .m { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+  .timerParts button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .timerParts button.on .m { color: inherit; }
+  .timerParts .week { font-size: 12px; color: var(--muted); margin: 2px 2px 0; }
+  .timerOther { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .timerPresets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 4px; }
+  .timerPresets button { padding: 8px 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .timerPresets button.on { background: var(--accent-soft); color: var(--accent); }
+  .timerActions { margin-top: 10px; }
+  .timerActions button { padding: 10px 14px; }
+  .timerActions .timerGo { flex: 1; justify-content: center; background: var(--accent); color: #fff; font-weight: 700; }
+  .timerActions .timerGo.running { background: var(--live); }
+  .timerActions .timerGo:disabled { background: var(--btn); color: var(--muted); }
 
   .items { display: flex; flex-direction: column; gap: 8px; }
   .item { display: flex; justify-content: space-between; align-items: center; text-align: left; gap: 10px; }
@@ -402,6 +424,25 @@
       <button class="link" data-open="track">Adjust…</button>
     </section>
 
+    <section class="panel" id="timerPanel" hidden>
+      <div class="panelHead">
+        <h2><i data-icon="timer"></i>Timer</h2>
+        <button class="toggle" id="timerScreenBtn" role="switch" title="Show the timer on a screen the speakers can see">Screen<span class="switch"></span></button>
+      </div>
+      <div class="timerBig" id="timerBig">—</div>
+      <div class="timerLabel" id="timerLabel"></div>
+      <div class="timerParts" id="timerParts"></div>
+      <div class="timerOther">Other length (minutes)</div>
+      <div class="timerPresets" id="timerPresets"></div>
+      <div class="actions timerActions">
+        <button id="timerStart" class="timerGo"></button>
+        <button id="timerMinus" title="One minute less">−1</button>
+        <button id="timerPlus" title="One minute more">+1</button>
+        <button id="timerReset" title="Back to the start of the part"><i data-icon="undo"></i></button>
+      </div>
+      <button class="link" data-open="timer">Which screen…</button>
+    </section>
+
     <section class="panel" id="remoteNote" hidden>
       <div class="panelHead"><h2><i data-icon="tablet"></i>Tablet remote</h2></div>
       <div class="empty">JW Library media and people following are handled by the meeting PC.</div>
@@ -421,6 +462,7 @@
     <button data-tab="track" class="mainOnly">Follow people</button>
     <button data-tab="layers">Layers</button>
     <button data-tab="tablet" class="mainOnly">Tablet</button>
+    <button data-tab="timer" class="mainOnly">Timer</button>
   </nav>
   <div class="dlgBody">
     <div data-pane="connection">
@@ -502,6 +544,15 @@
     </div>
 
     <div data-pane="tablet"><div id="remoteBox"></div></div>
+    <div data-pane="timer">
+      <div class="setup" style="margin-top:0">
+        <label>Show the timer on
+          <select id="timerScreen"></select></label>
+      </div>
+      <p class="help">Pick a screen the speakers can see. It fills that screen: green while there's time, amber in the
+        last minute, red and counting up once over time. With no part loaded it shows the time of day.
+        Meeting Camera puts it back on the same screen next time it starts.</p>
+    </div>
   </div>
 </dialog>
 
@@ -561,6 +612,7 @@ const ICONS = {
   tablet: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 18h.01"/>',
   volume: '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>',
   volumeX: '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2"/><path d="M9.5 2h5"/>',
   book: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5v-2z"/><path d="M8 7h8M8 11h6"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   list: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="m3 6 1 1 2-2"/><path d="m3 12 1 1 2-2"/><path d="m3 18 1 1 2-2"/>',
@@ -1032,6 +1084,136 @@ if (inApp) {
   });
 } else {
   everyMs(2000, askForSound);
+}
+
+// ---------------------------------------------------------------------------
+// Timer, like OnlyT: load a part's length, start it as the speaker begins, and a screen the
+// speakers can see counts down. The app keeps the time, so this card and that screen agree.
+// ---------------------------------------------------------------------------
+const TIMER_PRESETS = [1, 2, 3, 4, 5, 6, 7, 10, 15, 30];   // minutes
+let timer = null, timerOffset = 0;
+
+const timerLeft = () => !timer ? 0 : timer.running ? timer.endsAt - (Date.now() + timerOffset) : timer.left;
+function fmtTimer(ms) {   // rounded up while counting down, so it reaches 0:00 at zero; down once over
+  const s = ms >= 0 ? Math.ceil(ms / 1000) : Math.floor(-ms / 1000);
+  return (ms < 0 ? '+' : '') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function renderTimer() {
+  if (!timer) return;
+  const big = $('timerBig'), loaded = timer.length > 0, left = timerLeft();
+  big.textContent = loaded ? fmtTimer(left) : 'No part';
+  $('timerLabel').textContent = loaded ? timer.label : '';
+  big.className = 'timerBig' + (!loaded ? '' : left < 0 ? ' over' : left <= 60000 ? ' warn' : ' ok') + (loaded && !timer.running ? ' paused' : '');
+  const go = $('timerStart');
+  go.disabled = !loaded;
+  go.classList.toggle('running', timer.running);
+  go.innerHTML = icon(timer.running ? 'pause' : 'play') + (timer.running ? 'Stop' : 'Start');
+  $('timerMinus').disabled = $('timerPlus').disabled = $('timerReset').disabled = !loaded;
+  document.querySelectorAll('#timerPresets button').forEach(b => b.classList.toggle('on', loaded && !timer.label && +b.dataset.min * 60000 === timer.length));
+  document.querySelectorAll('#timerParts button').forEach(b => b.classList.toggle('on', loaded && b.dataset.title === timer.label));
+  const sw = $('timerScreenBtn');
+  sw.classList.toggle('on', timer.shown);
+  sw.setAttribute('aria-checked', timer.shown);
+}
+
+const timerDo = q => appFetch('/timer/set?' + new URLSearchParams(q))
+  .then(t => { timer = t; timerOffset = t.now - Date.now(); renderTimer(); }).catch(showError);
+
+// The next meeting's parts: the midweek one's from that week's workbook on wol.jw.org (the app
+// fetches it once and keeps it, so it works offline at the hall); the weekend one's never change.
+let timerParts = [];
+const WEEKEND_PARTS = [{ title: 'Public Talk', min: 30 }, { title: 'Watchtower Study', min: 60 }];
+
+function isoWeek(date) {   // wol.jw.org numbers the weeks the ISO way (Monday to Sunday)
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  return [d.getUTCFullYear(), Math.ceil(((d - Date.UTC(d.getUTCFullYear(), 0, 1)) / 864e5 + 1) / 7)];
+}
+
+let partsFor = '';
+async function loadTimerParts() {
+  const m = nextMeeting();
+  if (!m) return;
+  const [y, w] = isoWeek(m.at), key = m.kind + y + '-' + w;
+  if (key === partsFor) return;
+  let note = '';
+  if (m.kind === 'Weekend') { timerParts = WEEKEND_PARTS; note = 'Weekend meeting'; }
+  else {
+    try {
+      const r = await appFetch(`/timer/parts?year=${y}&week=${w}`);
+      if (r.error) throw new Error(r.error);
+      timerParts = r.parts; note = `Midweek meeting · ${r.week}`;
+    } catch (err) { timerParts = []; note = 'Couldn’t get this week’s parts from wol.jw.org — use the lengths below.'; }
+  }
+  partsFor = timerParts.length ? key : '';   // try again later if it failed
+  const box = $('timerParts');
+  box.innerHTML = `<div class="week"></div>`;
+  box.firstChild.textContent = note;
+  timerParts.forEach(p => {
+    const b = document.createElement('button');
+    b.dataset.title = p.title;
+    b.innerHTML = '<span class="t"></span><span class="m"></span>';
+    b.querySelector('.t').textContent = p.title;
+    b.querySelector('.m').textContent = p.min + ' min';
+    b.onclick = () => timerDo({ action: 'set', secs: p.min * 60, label: p.title });
+    box.appendChild(b);
+  });
+  renderTimer();
+}
+
+// Stopping a part gets the next one ready, as OnlyT does.
+function nextPart() {
+  const i = timer ? timerParts.findIndex(p => p.title === timer.label) : -1;
+  return i >= 0 ? timerParts[i + 1] : null;
+}
+
+async function renderTimerScreens() {
+  const sel = $('timerScreen');
+  try {
+    const { screens, saved } = await appFetch('/screens');
+    sel.innerHTML = '';
+    const none = new Option('Nowhere (hidden)', '');
+    sel.add(none);
+    screens.forEach(s => sel.add(new Option(`Screen ${s.number} — ${s.w}×${s.h}` +
+      (s.main ? ' (this screen)' : s.jw ? ' (JW Library uses it)' : ''), s.name)));
+    sel.value = timer && timer.shown ? timer.screen : saved && screens.some(s => s.name === saved) ? saved : '';
+  } catch {}
+}
+
+if (inApp) {
+  $('timerPanel').hidden = false;
+  TIMER_PRESETS.forEach(m => {
+    const b = document.createElement('button');
+    b.dataset.min = m;
+    b.textContent = m;
+    b.title = `${m} minute part`;
+    b.onclick = () => timerDo({ action: 'set', secs: m * 60, label: '' });
+    $('timerPresets').appendChild(b);
+  });
+  $('timerStart').onclick = async () => {
+    if (!(timer && timer.running)) return timerDo({ action: 'start' });
+    const next = nextPart();
+    await timerDo({ action: 'stop' });
+    if (next) timerDo({ action: 'set', secs: next.min * 60, label: next.title });
+  };
+  $('timerMinus').onclick = () => timerDo({ action: 'add', secs: -60 });
+  $('timerPlus').onclick = () => timerDo({ action: 'add', secs: 60 });
+  $('timerReset').onclick = () => timerDo({ action: 'reset' });
+  $('timerScreenBtn').onclick = async () => {
+    const t = await appFetch('/timer/show?screen=' + (timer && timer.shown ? '' : 'auto')).catch(showError);
+    if (t) { timer = t; renderTimer(); if (!t.shown) { showMsg('No spare screen for the timer — pick one under Settings → Timer.'); openSettings('timer'); } }
+  };
+  $('timerScreen').onchange = async e => {
+    const t = await appFetch('/timer/show?screen=' + encodeURIComponent(e.target.value)).catch(showError);
+    if (t) { timer = t; renderTimer(); }
+  };
+  everyMs(400, async () => {
+    try { const t = await appFetch('/timer'); timer = t; timerOffset = t.now - Date.now(); } catch {}
+  });
+  everyMs(100, renderTimer);
+  setTimeout(loadTimerParts);   // once the rest of the page (the meeting times) is set up
+  everyMs(10 * 60e3, loadTimerParts);   // the next meeting changes once one is over
 }
 
 // ---------------------------------------------------------------------------
@@ -2146,6 +2328,7 @@ function openSettings(tab = settingsTab) {
   document.querySelectorAll('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== tab; });
   if (!$('settingsDlg').open) $('settingsDlg').showModal();
   if (tab === 'tablet') renderRemoteBox();
+  if (tab === 'timer') renderTimerScreens();
   if (tab === 'track') drawTrack();
 }
 document.querySelectorAll('#tabs button').forEach(b => { b.onclick = () => openSettings(b.dataset.tab); });

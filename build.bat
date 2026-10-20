@@ -11,6 +11,6 @@ set NET=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319
 "%NET%\csc.exe" /nologo /optimize /target:winexe /win32icon:MeetingCamera.ico /platform:x64 /out:MeetingCamera.exe ^
   /r:"%NET%\WPF\UIAutomationClient.dll" /r:"%NET%\WPF\UIAutomationTypes.dll" /r:"%NET%\WPF\WindowsBase.dll" ^
   /r:webview2\Microsoft.Web.WebView2.Core.dll /r:webview2\Microsoft.Web.WebView2.WinForms.dll ^
-  /resource:obs-remote.html,obs-remote.html /resource:Start-Meeting.ps1,Start-Meeting.ps1 ^
+  /resource:obs-remote.html,obs-remote.html /resource:timer.html,timer.html /resource:Start-Meeting.ps1,Start-Meeting.ps1 ^
   /resource:MeetingCamera.ico,MeetingCamera.ico !RES! MeetingCamera.cs
 if errorlevel 1 (echo Build failed. & pause) else (echo Built MeetingCamera.exe)
