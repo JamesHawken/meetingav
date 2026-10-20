@@ -98,7 +98,7 @@
   .shot.missing .hint { display: block; }
 
   /* Grid view: only the shots, as big as the screen allows. Swipe right for the shot on air, full screen,
-     and left for the sound.
+     and left for the sound, then the timer.
      It covers the whole screen; warnings and messages stay on top of it. */
   body.gridMode main > header, body.gridMode #setupCard, body.gridMode #timerPanel, body.gridMode .top,
   body.gridMode .cards { display: none; }
@@ -180,6 +180,35 @@
   .mixer.big .meter { height: 6px; bottom: -6px; border-radius: 3px; }
   .mixer.big .val { font-size: 20px; }
   .mixer.big .help { text-align: center; margin: 0; }
+  /* The Timer page: the time big, then big buttons and the meeting's parts. */
+  .timerPage { overflow-y: auto; display: flex; align-items: center; justify-content: center;
+               padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+                        max(48px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); }
+  .tWrap { width: min(100%, 980px); display: flex; flex-direction: column; gap: 16px; margin: auto 0; }
+  .tBig { font-size: clamp(72px, 15vh, 150px); font-weight: 700; line-height: 1; text-align: center;
+          font-variant-numeric: tabular-nums; color: var(--muted); }
+  .tBig.ok { color: var(--ok); } .tBig.warn { color: var(--warn); } .tBig.over { color: var(--live); } .tBig.paused { opacity: .55; }
+  .tLabel { text-align: center; font-size: 20px; color: var(--muted); min-height: 26px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tButtons { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 12px; }
+  .tButtons button { padding: 20px 0; font-size: 22px; font-weight: 700; border-radius: 16px;
+                     display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .tButtons button svg.i { width: 26px; height: 26px; }
+  .tButtons .timerGo, .tButtons .timerGo:hover { background: var(--accent); color: #fff; }
+  .tButtons .timerGo.running { background: var(--live); }
+  .tButtons .timerGo:disabled { background: var(--btn); color: var(--muted); }
+  .tParts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 8px; }
+  .tParts .week { grid-column: 1 / -1; font-size: 14px; color: var(--muted); }
+  .tParts button { display: flex; justify-content: space-between; gap: 10px; padding: 14px 16px; font-size: 16px;
+                   text-align: left; border-radius: 12px; }
+  .tParts button .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tParts button .m { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+  .tParts button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .tParts button.on .m { color: inherit; }
+  .tOther { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 16px; color: var(--muted); }
+  .tOther input { width: 84px; padding: 12px; font-size: 18px; text-align: center; }
+  .tOther button { padding: 12px 22px; font-size: 16px; font-weight: 600; }
+  #tNote { text-align: center; margin: 0; }
   @media (max-width: 700px) {   /* phones: name above the slider */
     .mixer.big .mix { grid-template-columns: 60px 1fr 64px; grid-template-areas: "mute name val" "mute slide slide"; row-gap: 6px; font-size: 18px; }
     .mixer.big .mute { grid-area: mute; width: 60px; height: 60px; } .mixer.big .name { grid-area: name; }
@@ -258,7 +287,7 @@
             background: var(--panel); border: 2px solid var(--warn); color: var(--warn); }
   button.link { background: none; padding: 0; color: var(--accent); font-size: 14px; font-weight: 600; }
   button.link:hover { background: none; text-decoration: underline; }
-  #holdBtn.active, #practice button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  #practice button[aria-pressed="true"] { background: var(--accent); color: #fff; }
 
   .setupCard { margin-bottom: 16px; }
   .setupCard .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
@@ -351,8 +380,23 @@
           <p class="help" id="mixNote"></p>
         </div>
       </div>
+      <div class="page timerPage">
+        <div class="tWrap">
+          <div class="tBig" id="tBig">—</div>
+          <div class="tLabel" id="tLabel"></div>
+          <div class="tButtons">
+            <button id="tStart" class="timerGo"></button>
+            <button id="tMinus" title="One minute less">−1</button>
+            <button id="tPlus" title="One minute more">+1</button>
+            <button id="tReset" title="Back to the start of the part"></button>
+          </div>
+          <div class="tParts" id="tParts"></div>
+          <div class="tOther"><span>Other</span><input id="tMins" type="number" min="1" max="120" value="5" inputmode="numeric"><span>min</span><button id="tLoad">Load</button></div>
+          <p class="help" id="tNote"></p>
+        </div>
+      </div>
     </div>
-    <div class="pageDots"><button data-page="0" title="Shot on air, full screen"></button><button data-page="1" title="All shots"></button><button data-page="2" title="Sound"></button></div>
+    <div class="pageDots"><button data-page="0" title="Shot on air, full screen"></button><button data-page="1" title="All shots"></button><button data-page="2" title="Sound"></button><button data-page="3" title="Timer"></button></div>
   </section>
 
   <section class="panel setupCard" id="setupCard" hidden>
@@ -423,7 +467,6 @@
         <div class="hint" id="nextWhen"></div>
       </div>
       <div class="actions" style="align-items:center">
-        <button id="holdBtn"><i data-icon="clock"></i>Holding screen</button>
         <button class="link" data-open="times" style="margin-left:auto">Change times</button>
       </div>
     </section>
@@ -647,8 +690,8 @@ const SLOTS = {
 const OPTIONAL_SLOTS = ['reader'];   // shown only when OBS has the scene
 const ROWS = [
   { label: ['◀ Left', 'Platform', 'Right ▶'], slots: ['demo', 'wide', 'reader', 'table'] },
-  { label: ['Speaker & screen'],              slots: ['speaker', 'spkmon', 'monitor'] },
-];  // The holding screen has its own button on the meeting card.
+  { label: ['Speaker & screen', 'Before the meeting'], slots: ['speaker', 'spkmon', 'monitor', 'holding'] },
+];
 // What JW Library is showing → which slot to cut to.
 const AUTO_TARGET = { image: 'spkmon', video: 'monitor' };
 
@@ -835,6 +878,7 @@ function onEvent(type, e) {
     case 'VirtualcamStateChanged': setCam(e.outputActive); break;
     case 'CustomEvent':
       onAudioEvent(e);
+      onTimerEvent(e);
       if (e.meetingCameraTimes) applyTimes(e.meetingCameraTimes);
       if (e.meetingCameraPick && isMain && track.on) followOffByPick();   // picked on a tablet
       break;
@@ -897,6 +941,12 @@ function shotButton(title, hint, iconName, sceneName) {
       <div class="text"><div class="name"></div><div class="hint"></div></div><span class="key"></span></div>`;
   b.querySelector('.name').textContent = title;
   b.querySelector('.hint').textContent = hint;
+  if (!sceneName && title === SLOTS.holding.title) {   // no holding screen yet: clicking makes one
+    b.classList.add('missing');
+    b.querySelector('.hint').textContent = 'Click to create it';
+    b.onclick = showHolding;
+    return b;
+  }
   if (!sceneName) {
     b.classList.add('missing');
     b.disabled = true;
@@ -910,7 +960,8 @@ function shotButton(title, hint, iconName, sceneName) {
   if (thumbs.has(sceneName)) img.src = thumbs.get(sceneName);
   thumbImgs.set(sceneName, img);
   b.title = `OBS scene: ${sceneName}`;
-  b.onclick = () => manualSwitch(sceneName);
+  // The holding screen pauses Follow people by itself, so picking it doesn't turn following off.
+  b.onclick = () => title === SLOTS.holding.title ? showHolding() : manualSwitch(sceneName);
   return b;
 }
 
@@ -946,9 +997,6 @@ function renderShots() {
     box.appendChild(grid);
   }
 
-  const onHold = !!bySlot.holding && state.current === bySlot.holding;
-  $('holdBtn').classList.toggle('active', onHold);
-  $('holdBtn').lastChild.textContent = onHold ? 'Holding screen is on' : 'Holding screen';
   $('shotsHint').textContent = isMain && state.order.length ? `Click, or press 1–${Math.min(9, state.order.length)}` : '';
 
   const slot = Object.keys(bySlot).find(k => bySlot[k] === state.current);
@@ -1059,6 +1107,9 @@ function askForSound() {
     call('BroadcastCustomEvent', { eventData: { meetingCameraSoundWanted: 1 } }).catch(() => {});
     if (Date.now() - mixSeenAt > 4000) $('mixNote').textContent = 'Waiting for Meeting Camera on the PC…';
   }
+  // Same for the Timer page: the PC keeps the time and sends it while it's open.
+  if (!inApp && connected && gridMode && gridPage === 3)
+    call('BroadcastCustomEvent', { eventData: { meetingCameraTimerWanted: 1 } }).catch(() => {});
 }
 
 document.querySelectorAll('.mix').forEach(row => {
@@ -1130,7 +1181,7 @@ const timerDo = q => appFetch('/timer/set?' + new URLSearchParams(q))
 
 // The next meeting's parts: the midweek one's from that week's workbook on wol.jw.org (the app
 // fetches it once and keeps it, so it works offline at the hall); the weekend one's never change.
-let timerParts = [];
+let timerParts = [], timerPartsNote = '', firstPartReady = false;
 const WEEKEND_PARTS = [{ title: 'Public Talk', min: 30 }, { title: 'Watchtower Study', min: 60 }];
 
 function isoWeek(date) {   // wol.jw.org numbers the weeks the ISO way (Monday to Sunday)
@@ -1155,6 +1206,13 @@ async function loadTimerParts() {
     } catch (err) { timerParts = []; note = 'Couldn’t get this week’s parts from wol.jw.org — type a length below.'; }
   }
   partsFor = timerParts.length ? key : '';   // try again later if it failed
+  timerPartsNote = note;
+  // When the app opens, the meeting's first part is ready to start (unless a part is already loaded).
+  if (!firstPartReady && timerParts.length) {
+    firstPartReady = true;
+    const t = timer || await appFetch('/timer').catch(() => null);
+    if (t && !t.length && !t.running) timerDo({ action: 'set', secs: timerParts[0].min * 60, label: timerParts[0].title });
+  }
   const box = $('timerParts');
   box.innerHTML = `<div class="week"></div>`;
   box.firstChild.textContent = note;
@@ -1168,6 +1226,19 @@ async function loadTimerParts() {
     box.appendChild(b);
   });
   renderTimer();
+}
+
+// The PC does what's asked; a tablet's Timer page asks the PC through OBS.
+// stopNext stops the part and gets the next one ready, as OnlyT does.
+async function timerAct(q) {
+  if (!inApp) {
+    if (connected) call('BroadcastCustomEvent', { eventData: { meetingCameraTimerDo: q } }).catch(() => {});
+    return;
+  }
+  if (q.action !== 'stopNext') return timerDo(q);
+  const next = nextPart();
+  await timerDo({ action: 'stop' });
+  if (next) timerDo({ action: 'set', secs: next.min * 60, label: next.title });
 }
 
 // Stopping a part gets the next one ready, as OnlyT does.
@@ -1198,15 +1269,10 @@ if (inApp) {
   };
   $('timerLoad').onclick = loadMins;
   $('timerMins').onkeydown = e => { if (e.key === 'Enter') loadMins(); };
-  $('timerStart').onclick = async () => {
-    if (!(timer && timer.running)) return timerDo({ action: 'start' });
-    const next = nextPart();
-    await timerDo({ action: 'stop' });
-    if (next) timerDo({ action: 'set', secs: next.min * 60, label: next.title });
-  };
-  $('timerMinus').onclick = () => timerDo({ action: 'add', secs: -60 });
-  $('timerPlus').onclick = () => timerDo({ action: 'add', secs: 60 });
-  $('timerReset').onclick = () => timerDo({ action: 'reset' });
+  $('timerStart').onclick = () => timerAct({ action: timer && timer.running ? 'stopNext' : 'start' });
+  $('timerMinus').onclick = () => timerAct({ action: 'add', secs: -60 });
+  $('timerPlus').onclick = () => timerAct({ action: 'add', secs: 60 });
+  $('timerReset').onclick = () => timerAct({ action: 'reset' });
   $('timerScreenBtn').onclick = async () => {
     const t = await appFetch('/timer/show?screen=' + (timer && timer.shown ? '' : 'auto')).catch(showError);
     if (t) { timer = t; renderTimer(); if (!t.shown) { showMsg('No spare screen for the timer — pick one under Settings → Timer.'); openSettings('timer'); } }
@@ -1216,12 +1282,84 @@ if (inApp) {
     if (t) { timer = t; renderTimer(); }
   };
   everyMs(400, async () => {
-    try { const t = await appFetch('/timer'); timer = t; timerOffset = t.now - Date.now(); } catch {}
+    try {
+      const t = await appFetch('/timer');
+      timer = t; timerOffset = t.now - Date.now();
+      if (Date.now() < tabletsWantTimer && connected)   // a tablet has its Timer page open
+        call('BroadcastCustomEvent', { eventData: { meetingCameraTimer: { ...t, parts: timerParts, note: timerPartsNote } } }).catch(() => {});
+    } catch {}
   });
   everyMs(100, renderTimer);
   setTimeout(loadTimerParts);   // once the rest of the page (the meeting times) is set up
   everyMs(10 * 60e3, loadTimerParts);   // the next meeting changes once one is over
 }
+
+// ---- The Timer page of the grid view (a tablet's, or the PC's own) ----
+let tabletsWantTimer = 0, timerSeenAt = 0, tPartsKey = null;
+
+function onTimerEvent(e) {
+  if (inApp && e.meetingCameraTimerWanted) tabletsWantTimer = Date.now() + 5000;
+  if (inApp && e.meetingCameraTimerDo) {
+    const q = e.meetingCameraTimerDo, secs = Math.round(+q.secs || 0);
+    if (['start', 'stopNext', 'reset'].includes(q.action)) timerAct({ action: q.action });
+    else if (q.action === 'add' && Math.abs(secs) <= 3600) timerAct({ action: 'add', secs });
+    else if (q.action === 'set' && secs > 0 && secs <= 7200) timerAct({ action: 'set', secs, label: String(q.label || '').slice(0, 200) });
+  }
+  if (!inApp && e.meetingCameraTimer) {
+    timer = e.meetingCameraTimer;
+    timerOffset = timer.now - Date.now();
+    timerSeenAt = Date.now();
+  }
+}
+
+function renderTimerPage() {
+  if (!gridMode || gridPage !== 3) return;
+  $('tNote').textContent = !inApp && Date.now() - timerSeenAt > 4000 ? 'Waiting for Meeting Camera on the PC…' : '';
+  if (!timer) return;
+  const loaded = timer.length > 0, left = timerLeft(), big = $('tBig');
+  big.textContent = loaded ? fmtTimer(left) : 'No part';
+  big.className = 'tBig' + (!loaded ? '' : left < 0 ? ' over' : left <= 60000 ? ' warn' : ' ok') + (loaded && !timer.running ? ' paused' : '');
+  $('tLabel').textContent = loaded ? timer.label : 'Pick a part';
+  const go = $('tStart');
+  go.disabled = !loaded;
+  go.classList.toggle('running', timer.running);
+  go.innerHTML = icon(timer.running ? 'pause' : 'play') + (timer.running ? 'Stop' : 'Start');
+  $('tMinus').disabled = $('tPlus').disabled = $('tReset').disabled = !loaded;
+  // The parts: the PC's own, or what the PC sent.
+  const parts = inApp ? timerParts : timer.parts || [], note = inApp ? timerPartsNote : timer.note || '';
+  const key = note + JSON.stringify(parts);
+  if (key !== tPartsKey) {
+    tPartsKey = key;
+    const box = $('tParts');
+    box.innerHTML = '<div class="week"></div>';
+    box.firstChild.textContent = note;
+    parts.forEach(p => {
+      const b = document.createElement('button');
+      b.dataset.title = p.title;
+      b.innerHTML = '<span class="t"></span><span class="m"></span>';
+      b.querySelector('.t').textContent = p.title;
+      b.querySelector('.m').textContent = p.min + ' min';
+      b.onclick = () => timerAct({ action: 'set', secs: p.min * 60, label: p.title });
+      box.appendChild(b);
+    });
+  }
+  document.querySelectorAll('#tParts button').forEach(b => b.classList.toggle('on', loaded && b.dataset.title === timer.label));
+}
+
+$('tStart').onclick = () => timerAct({ action: timer && timer.running ? 'stopNext' : 'start' });
+$('tMinus').onclick = () => timerAct({ action: 'add', secs: -60 });
+$('tPlus').onclick = () => timerAct({ action: 'add', secs: 60 });
+$('tReset').innerHTML = icon('undo');
+// Until the first reading arrives: a greyed-out Start, not an empty button.
+['tStart', 'timerStart'].forEach(id => { $(id).innerHTML = icon('play') + 'Start'; $(id).disabled = true; });
+$('tReset').onclick = () => timerAct({ action: 'reset' });
+const tLoadMins = () => {
+  const m = Math.round(+$('tMins').value);
+  if (m >= 1 && m <= 120) timerAct({ action: 'set', secs: m * 60, label: '' });
+};
+$('tLoad').onclick = tLoadMins;
+$('tMins').onkeydown = e => { if (e.key === 'Enter') tLoadMins(); };
+everyMs(100, renderTimerPage);
 
 // ---------------------------------------------------------------------------
 // Grid view: just the shots, big - for a tablet on a stand, or the PC. Each device remembers it;
@@ -1239,8 +1377,8 @@ function setGridMode(on) {
   if (on) showPage(1, false);
 }
 
-// Three pages side by side: the shot on air full screen (swipe right to it), all the shots, and
-// the sound (swipe left to it).
+// Four pages side by side: the shot on air full screen (swipe right to it), all the shots, then
+// (swiping left) the sound and the timer.
 let gridPage = 1;
 function showPage(n, smooth = true) {
   gridPage = n;
@@ -1269,7 +1407,6 @@ function renderGrid() {
   const { bySlot, others } = layout();
   const tiles = [
     ...ROWS.flatMap(r => r.slots).filter(k => bySlot[k]).map(k => [SLOTS[k].title, bySlot[k]]),
-    ...(bySlot.holding ? [[SLOTS.holding.title, bySlot.holding]] : []),
     ...others.map(n => [n, n]),
   ];
   if (!tiles.length) box.innerHTML = `<div class="empty">${connected ? 'No scenes yet — add them in OBS.' : 'Waiting for OBS…'}</div>`;
@@ -1337,7 +1474,7 @@ const PREVIEW_FPS = 15;
 let thumbBusy = false, thumbIdx = 0;
 setInterval(async () => {
   if (!connected || thumbBusy || document.hidden) return;
-  const others = [...state.order, layout().bySlot.holding].filter(n => n && n !== state.current);
+  const others = state.order.filter(n => n !== state.current);
   if (!others.length) return;
   const name = others[thumbIdx++ % others.length];
   thumbBusy = true;
@@ -1991,7 +2128,6 @@ async function showHolding() {
     switchScene(layout().bySlot.holding || await createHolding());   // Follow people pauses on its own here
   } catch (err) { showError(err); }
 }
-$('holdBtn').onclick = showHolding;
 
 // The app opens on the holding screen - unless a meeting is under way, so the page reloading
 // mid-meeting doesn't cut away from it.

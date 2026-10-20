@@ -64,8 +64,10 @@ Meeting Camera makes one.
   part, press **Start** as the speaker begins, and the speakers' screen counts
   down: green, amber in the last minute, red and counting up once over time.
   **Stop** gets the next part ready. With no part loaded it shows the time of
-  day. It sits at the top; switch **Screen** on to show it, and pick which screen
-  under Settings → Timer.
+  day. It sits at the top, with the meeting's first part loaded when the app
+  opens; switch **Screen** on to show it, and pick which screen under
+  Settings → Timer. In the grid view, a fourth page (swipe left past Sound)
+  controls it from a tablet.
 
 ## Tablet or phone
 
