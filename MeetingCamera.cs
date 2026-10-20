@@ -5,6 +5,7 @@
 //     progress shows in the page
 //   - Serves the page to tablets on the hall Wi-Fi (port 8080, or the next free one, remembered)
 //   - Tells the page OBS's websocket port and password, so nobody has to type them
+//   - Sets the volume of the speakers, Zoom and JW Library (a small mixer in the page)
 //   - Shows the page what JW Library's second display is showing (OBS only captures a screen
 //     while its scene is on air, so it can't be used to spot media starting)
 // Closing the Meeting Camera window quits the app.
@@ -27,6 +28,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -371,6 +373,183 @@ static class MeetingCamera
     }
 
 
+    // ---- Sound ------------------------------------------------------------------
+    // Windows' own volume (the default speakers), and Zoom's and JW Library's on their own as in
+    // Windows' Volume mixer, each with a level for the page's meters. An app's sound is found on
+    // whichever speakers it plays to.
+
+    static readonly object AudioLock = new object();
+    static readonly Dictionary<string, string> AudioApps = new Dictionary<string, string> {
+        { "zoom", "Zoom" }, { "jw", "JWLibrary" },   // page name -> process name
+    };
+
+    static string AudioJson()
+    {
+        lock (AudioLock)
+        {
+            StringBuilder json = new StringBuilder("{\"system\":");
+            try
+            {
+                IMMDevice speakers;
+                Enumerator().GetDefaultAudioEndpoint(0, 1, out speakers);   // eRender, eMultimedia
+                IAudioEndpointVolume volume = (IAudioEndpointVolume)Activate(speakers, typeof(IAudioEndpointVolume).GUID);
+                IAudioMeterInformation meter = (IAudioMeterInformation)Activate(speakers, typeof(IAudioMeterInformation).GUID);
+                float level, peak; bool mute;
+                volume.GetMasterVolumeLevelScalar(out level); volume.GetMute(out mute); meter.GetPeakValue(out peak);
+                json.Append(AudioLevel(level, mute, peak));
+            }
+            catch { json.Append("null"); }   // no speakers
+            foreach (var app in AudioApps)
+            {
+                json.Append(",\"" + app.Key + "\":");
+                float level = 0, peak = 0; bool mute = false, found = false;
+                foreach (IAudioSessionControl2 session in Sessions(app.Value))
+                {
+                    try
+                    {
+                        float p;
+                        ((IAudioMeterInformation)session).GetPeakValue(out p);
+                        if (!found) { level = SessionVolume(session, out mute); found = true; }
+                        peak = Math.Max(peak, p);
+                    }
+                    catch { }
+                }
+                if (found && !mute && level == 0 && MutedAt.ContainsKey(app.Key)) mute = true;
+                json.Append(found ? AudioLevel(level, mute, peak) : "null");   // not playing anything yet
+            }
+            return json.Append("}").ToString();
+        }
+    }
+
+    // target: system, zoom or jw. volume: 0-100, or null to leave it; mute: true/false, or null.
+    static void SetAudio(string target, int? volume, bool? mute)
+    {
+        Guid none = Guid.Empty;
+        lock (AudioLock)
+        {
+            try
+            {
+                if (target == "system")
+                {
+                    IMMDevice speakers;
+                    Enumerator().GetDefaultAudioEndpoint(0, 1, out speakers);
+                    IAudioEndpointVolume v = (IAudioEndpointVolume)Activate(speakers, typeof(IAudioEndpointVolume).GUID);
+                    if (volume.HasValue) v.SetMasterVolumeLevelScalar(volume.Value / 100f, ref none);
+                    if (mute.HasValue) v.SetMute(mute.Value, ref none);
+                }
+                else if (AudioApps.ContainsKey(target))
+                {
+                    List<IAudioSessionControl2> sessions = Sessions(AudioApps[target]);
+                    if (sessions.Count == 0) return;
+                    bool wasMuted;
+                    float before = SessionVolume(sessions[0], out wasMuted);
+                    foreach (IAudioSessionControl2 session in sessions)
+                    {
+                        try
+                        {
+                            ISimpleAudioVolume simple = session as ISimpleAudioVolume;
+                            if (volume.HasValue) SetSessionVolume(session, volume.Value / 100f);
+                            if (mute.HasValue && simple != null) simple.SetMute(mute.Value, ref none);
+                            // Without Windows' own mute for apps, muting is volume 0, and unmuting puts it back.
+                            else if (mute == true) SetSessionVolume(session, 0);
+                            else if (mute == false) SetSessionVolume(session, MutedAt.ContainsKey(target) ? MutedAt[target] : 1);
+                        }
+                        catch { }
+                    }
+                    if (volume.HasValue || mute == false) MutedAt.Remove(target);
+                    else if (mute == true && sessions[0] as ISimpleAudioVolume == null && before > 0) MutedAt[target] = before;
+                }
+            }
+            catch { }
+        }
+    }
+
+    // The level each app had when it was muted by setting its volume to 0, to put back when unmuted.
+    static readonly Dictionary<string, float> MutedAt = new Dictionary<string, float>();
+
+    // An app's volume as in Windows' Volume mixer. Some Windows versions don't offer the simple
+    // control for other apps' sound, only one per channel (left, right...), which is used then.
+    static float SessionVolume(IAudioSessionControl2 session, out bool mute)
+    {
+        mute = false;
+        ISimpleAudioVolume simple = session as ISimpleAudioVolume;
+        if (simple != null) { float v; simple.GetMasterVolume(out v); simple.GetMute(out mute); return v; }
+        IChannelAudioVolume channels = (IChannelAudioVolume)session;
+        uint n; channels.GetChannelCount(out n);
+        float level = 0;
+        for (uint c = 0; c < n; c++) { float v; channels.GetChannelVolume(c, out v); level = Math.Max(level, v); }
+        return level;
+    }
+
+    static void SetSessionVolume(IAudioSessionControl2 session, float level)
+    {
+        Guid none = Guid.Empty;
+        ISimpleAudioVolume simple = session as ISimpleAudioVolume;
+        if (simple != null) { simple.SetMasterVolume(level, ref none); return; }
+        IChannelAudioVolume channels = (IChannelAudioVolume)session;
+        uint n; channels.GetChannelCount(out n);
+        for (uint c = 0; c < n; c++) channels.SetChannelVolume(c, level, ref none);
+    }
+
+    static string AudioLevel(float volume, bool mute, float peak)
+    {
+        return "{\"vol\":" + volume.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) +
+               ",\"mute\":" + (mute ? "true" : "false") +
+               ",\"peak\":" + peak.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "}";
+    }
+
+    static IMMDeviceEnumerator Enumerator()
+    {
+        return (IMMDeviceEnumerator)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")));
+    }
+
+    static object Activate(IMMDevice device, Guid iid)
+    {
+        object o;
+        device.Activate(ref iid, 23, IntPtr.Zero, out o);   // CLSCTX_ALL
+        return o;
+    }
+
+    // An app's sound sessions on every working output (an app can play to other speakers).
+    static List<IAudioSessionControl2> Sessions(string processName)
+    {
+        List<IAudioSessionControl2> found = new List<IAudioSessionControl2>();
+        HashSet<int> pids = new HashSet<int>();
+        foreach (Process p in Process.GetProcessesByName(processName)) pids.Add(p.Id);
+        if (pids.Count == 0) return found;
+        try
+        {
+            IMMDeviceCollection outputs;
+            Enumerator().EnumAudioEndpoints(0, 1, out outputs);   // eRender, DEVICE_STATE_ACTIVE
+            int count;
+            outputs.GetCount(out count);
+            for (int i = 0; i < count; i++)
+            {
+                try
+                {
+                    IMMDevice device;
+                    outputs.Item(i, out device);
+                    IAudioSessionEnumerator list;
+                    ((IAudioSessionManager2)Activate(device, typeof(IAudioSessionManager2).GUID)).GetSessionEnumerator(out list);
+                    int n;
+                    list.GetCount(out n);
+                    for (int j = 0; j < n; j++)
+                    {
+                        IAudioSessionControl2 session;
+                        list.GetSession(j, out session);
+                        int state; uint pid;
+                        session.GetState(out state);
+                        session.GetProcessId(out pid);
+                        if (state != 2 && pids.Contains((int)pid)) found.Add(session);   // 2: expired
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return found;
+    }
+
     // ---- JW Library's second display ---------------------------------------------
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
@@ -701,6 +880,15 @@ static class MeetingCamera
                 RunSetup(m.Success ? m.Groups[1].Value : null);
                 SendJson(stream, SetupJson());
             }
+            else if (path == "/audio" && local)
+                SendJson(stream, AudioJson());
+            else if (path == "/audio/set" && local)
+            {
+                Match t = Regex.Match(query, "target=(\\w+)"), v = Regex.Match(query, "vol=(\\d+)"), m = Regex.Match(query, "mute=([01])");
+                SetAudio(t.Groups[1].Value, v.Success ? (int?)Math.Min(100, int.Parse(v.Groups[1].Value)) : null,
+                         m.Success ? (bool?)(m.Groups[1].Value == "1") : null);
+                SendJson(stream, AudioJson());
+            }
             else if (path == "/show" && local)
             {
                 UiThread.BeginInvoke((Action)OpenWindow);
@@ -782,4 +970,99 @@ class AppWindow : Form
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
     }
+}
+
+// ---- Windows Core Audio (the parts the sound mixer uses) ---------------------------
+
+[ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator
+{
+    void EnumAudioEndpoints(int dataFlow, int stateMask, out IMMDeviceCollection devices);
+    void GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
+}
+
+[ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceCollection
+{
+    void GetCount(out int count);
+    void Item(int index, out IMMDevice device);
+}
+
+[ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice
+{
+    void Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
+}
+
+[ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume
+{
+    void RegisterControlChangeNotify(IntPtr notify);
+    void UnregisterControlChangeNotify(IntPtr notify);
+    void GetChannelCount(out uint count);
+    void SetMasterVolumeLevel(float levelDb, ref Guid context);
+    void SetMasterVolumeLevelScalar(float level, ref Guid context);
+    void GetMasterVolumeLevel(out float levelDb);
+    void GetMasterVolumeLevelScalar(out float level);
+    void SetChannelVolumeLevel(uint channel, float levelDb, ref Guid context);
+    void SetChannelVolumeLevelScalar(uint channel, float level, ref Guid context);
+    void GetChannelVolumeLevel(uint channel, out float levelDb);
+    void GetChannelVolumeLevelScalar(uint channel, out float level);
+    void SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context);
+    void GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+}
+
+[ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioMeterInformation
+{
+    void GetPeakValue(out float peak);
+}
+
+[ComImport, Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionManager2
+{
+    void GetAudioSessionControl(IntPtr sessionGuid, uint flags, out IntPtr control);
+    void GetSimpleAudioVolume(IntPtr sessionGuid, uint flags, out IntPtr volume);
+    void GetSessionEnumerator(out IAudioSessionEnumerator sessions);
+}
+
+[ComImport, Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionEnumerator
+{
+    void GetCount(out int count);
+    void GetSession(int index, out IAudioSessionControl2 session);
+}
+
+[ComImport, Guid("BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionControl2
+{
+    void GetState(out int state);
+    void GetDisplayName(out IntPtr name);
+    void SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string name, ref Guid context);
+    void GetIconPath(out IntPtr path);
+    void SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string path, ref Guid context);
+    void GetGroupingParam(out Guid group);
+    void SetGroupingParam(ref Guid group, ref Guid context);
+    void RegisterAudioSessionNotification(IntPtr notify);
+    void UnregisterAudioSessionNotification(IntPtr notify);
+    void GetSessionIdentifier(out IntPtr id);
+    void GetSessionInstanceIdentifier(out IntPtr id);
+    void GetProcessId(out uint pid);
+}
+
+[ComImport, Guid("87CE5498-68D6-44E5-9215-6F031A5A4C8F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISimpleAudioVolume
+{
+    void SetMasterVolume(float level, ref Guid context);
+    void GetMasterVolume(out float level);
+    void SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context);
+    void GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+}
+
+[ComImport, Guid("1C158861-B533-4B30-B1CF-E853E51C59B8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IChannelAudioVolume
+{
+    void GetChannelCount(out uint count);
+    void SetChannelVolume(uint index, float level, ref Guid context);
+    void GetChannelVolume(uint index, out float level);
 }

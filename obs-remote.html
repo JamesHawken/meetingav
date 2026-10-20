@@ -97,7 +97,8 @@
   .shot .hint, .shot:not(.missing) .ico { display: none; }
   .shot.missing .hint { display: block; }
 
-  /* Grid view: only the shots, as big as the screen allows. Swipe right for the shot on air, full screen.
+  /* Grid view: only the shots, as big as the screen allows. Swipe right for the shot on air, full screen,
+     and left for the sound.
      It covers the whole screen; warnings and messages stay on top of it. */
   body.gridMode main > header, body.gridMode #setupCard, body.gridMode .top, body.gridMode .cards { display: none; }
   body.gridMode { overflow: hidden; }
@@ -145,6 +146,44 @@
   .tile.active .name { background: var(--accent); }
   .tile.active.live { border-color: var(--live); }
   .tile.active.live .name { background: var(--live); }
+
+  /* Sound: one row each - mute, name, volume with a level meter under it, percentage. */
+  .mixer { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .mix { display: grid; grid-template-columns: 34px 88px 1fr 64px; align-items: center; gap: 8px; font-size: 14px; }
+  .mix .mute { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
+  .mix .mute svg.i { width: 18px; height: 18px; }
+  .mix .mute.muted { background: var(--live); color: #fff; }
+  .mix .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mix .slide { position: relative; display: flex; align-items: center; }
+  .mix input[type=range] { width: 100%; margin: 0; accent-color: var(--accent); }
+  .mix .meter { position: absolute; left: 0; right: 0; bottom: -5px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .mix .meter span { display: block; height: 100%; width: 0; background: var(--ok); transition: width .1s linear; }
+  .mix .val { font-size: 13px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mix.off .name, .mix.off .slide { opacity: .45; }
+  /* The Sound page: three big rows in the middle of the screen, easy to hit with a finger. */
+  .mixPage { overflow-y: auto; display: flex; align-items: center; justify-content: center;
+             padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+                      max(48px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); }
+  .mixer.big { width: min(100%, 980px); gap: clamp(28px, 7vh, 64px); margin: 0; }
+  .mixer.big .mix { grid-template-columns: 76px minmax(110px, 170px) 1fr 84px; gap: 20px; font-size: 22px; }
+  .mixer.big .mute { width: 76px; height: 76px; border-radius: 18px; }
+  .mixer.big .mute svg.i { width: 34px; height: 34px; }
+  .mixer.big input[type=range] { -webkit-appearance: none; appearance: none; height: 44px; background: none;
+                                 border: 0; padding: 0; box-shadow: none; }
+  .mixer.big input[type=range]::-webkit-slider-runnable-track { height: 14px; border-radius: 7px; background: var(--line); }
+  .mixer.big input[type=range]::-moz-range-track { height: 14px; border-radius: 7px; background: var(--line); }
+  .mixer.big input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 40px; height: 40px; margin-top: -13px;
+    border-radius: 50%; background: var(--accent); border: 4px solid var(--panel); box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  .mixer.big input[type=range]::-moz-range-thumb { width: 32px; height: 32px; border-radius: 50%; background: var(--accent);
+    border: 4px solid var(--panel); }
+  .mixer.big .meter { height: 6px; bottom: -6px; border-radius: 3px; }
+  .mixer.big .val { font-size: 20px; }
+  .mixer.big .help { text-align: center; margin: 0; }
+  @media (max-width: 700px) {   /* phones: name above the slider */
+    .mixer.big .mix { grid-template-columns: 60px 1fr 64px; grid-template-areas: "mute name val" "mute slide slide"; row-gap: 6px; font-size: 18px; }
+    .mixer.big .mute { grid-area: mute; width: 60px; height: 60px; } .mixer.big .name { grid-area: name; }
+    .mixer.big .slide { grid-area: slide; } .mixer.big .val { grid-area: val; font-size: 16px; }
+  }
 
   .items { display: flex; flex-direction: column; gap: 8px; }
   .item { display: flex; justify-content: space-between; align-items: center; text-align: left; gap: 10px; }
@@ -272,8 +311,19 @@
         </div>
         <div class="gridTiles" id="gridTiles"></div>
       </div>
+      <div class="page mixPage">
+        <div class="mixer big">
+          <div class="mix" data-target="system"><button class="mute"></button><span class="name">Speakers</span>
+            <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <div class="mix" data-target="zoom"><button class="mute"></button><span class="name">Zoom</span>
+            <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <div class="mix" data-target="jw"><button class="mute"></button><span class="name">JW Library</span>
+            <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <p class="help" id="mixNote"></p>
+        </div>
+      </div>
     </div>
-    <div class="pageDots"><button data-page="0" title="Shot on air, full screen"></button><button data-page="1" title="All shots"></button></div>
+    <div class="pageDots"><button data-page="0" title="Shot on air, full screen"></button><button data-page="1" title="All shots"></button><button data-page="2" title="Sound"></button></div>
   </section>
 
   <section class="panel setupCard" id="setupCard" hidden>
@@ -295,6 +345,14 @@
         <span class="onAir" id="onAir"></span>
       </div>
       <button class="camBtn" id="camBtn" disabled></button>
+      <div class="mixer" id="mixer" hidden>
+        <div class="mix" data-target="system"><button class="mute"></button><span class="name">Speakers</span>
+          <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+        <div class="mix" data-target="zoom"><button class="mute"></button><span class="name">Zoom</span>
+          <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+        <div class="mix" data-target="jw"><button class="mute"></button><span class="name">JW Library</span>
+          <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+      </div>
     </section>
     <section class="panel">
       <div class="panelHead"><h2><i data-icon="film"></i>Shots</h2><span class="hint" id="shotsHint"></span></div>
@@ -501,6 +559,8 @@ const ICONS = {
   alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   tablet: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 18h.01"/>',
+  volume: '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>',
+  volumeX: '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>',
   book: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5v-2z"/><path d="M8 7h8M8 11h6"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   list: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="m3 6 1 1 2-2"/><path d="m3 12 1 1 2-2"/><path d="m3 18 1 1 2-2"/>',
@@ -711,7 +771,11 @@ function onEvent(type, e) {
     case 'CurrentProgramSceneChanged': state.current = e.sceneName; renderShots(); loadItems(); break;
     case 'SceneListChanged': state.scenes = e.scenes; renderShots(); break;
     case 'VirtualcamStateChanged': setCam(e.outputActive); break;
-    case 'CustomEvent': if (e.meetingCameraTimes) applyTimes(e.meetingCameraTimes); break;
+    case 'CustomEvent':
+      onAudioEvent(e);
+      if (e.meetingCameraTimes) applyTimes(e.meetingCameraTimes);
+      if (e.meetingCameraPick && isMain && track.on) followOffByPick();   // picked on a tablet
+      break;
     case 'SceneItemEnableStateChanged':
       if (e.sceneName === state.current) {
         const it = state.items.find(i => i.sceneItemId === e.sceneItemId);
@@ -851,12 +915,15 @@ function renderItems() {
 }
 
 function switchScene(name) { call('SetCurrentProgramScene', { sceneName: name }).catch(showError); }
-// Picking a shot turns Follow people off, so it stays on that shot until it's switched back on.
+// Picking a shot turns Follow people off, so it stays on that shot until it's switched back on -
+// on a tablet too: the PC does the following, so the tablet tells it through OBS.
 // JW Library media still cuts to the screen and back.
 function manualSwitch(name) {
-  if (track.on) { setTrackOn(false); track.offByPick = true; renderTrack(); }
+  if (track.on) followOffByPick();
+  if (!isMain) call('BroadcastCustomEvent', { eventData: { meetingCameraPick: name } }).catch(() => {});
   switchScene(name);
 }
+function followOffByPick() { setTrackOn(false); track.offByPick = true; renderTrack(); }
 function toggleCam() { call(state.camOn ? 'StopVirtualCam' : 'StartVirtualCam').catch(showError); }
 // A banner under the header: errors disappear after a while, notes stay until fixed.
 let msgTimer = null;
@@ -883,6 +950,91 @@ function setThumb(name, src) {
 }
 
 // ---------------------------------------------------------------------------
+// Sound: Windows' volume (the speakers), and Zoom's and JW Library's own as in Windows' Volume
+// mixer, each with a level meter. The app does it, so only on the PC.
+// ---------------------------------------------------------------------------
+const MIX = ['system', 'zoom', 'jw'];
+const mixDragging = {};   // target -> true while its slider is held, so the readings don't move it
+let mixSeenAt = 0;        // when the last readings arrived
+let tabletsWantSound = 0; // on the PC: until when a tablet has its Sound page open
+
+// Every set of rows: under the camera button on the PC, and the Sound page of the grid view.
+function renderMix(a) {
+  mixSeenAt = Date.now();
+  $('mixNote').textContent = '';
+  for (const t of MIX) document.querySelectorAll(`.mix[data-target="${t}"]`).forEach(row => {
+    const s = a[t], range = row.querySelector('input'), btn = row.querySelector('.mute');
+    row.classList.toggle('off', !s);
+    range.disabled = btn.disabled = !s;
+    btn.classList.toggle('muted', !!s && s.mute);
+    btn.innerHTML = icon(s && s.mute ? 'volumeX' : 'volume');
+    btn.title = s && s.mute ? 'Unmute' : 'Mute';
+    row.querySelector('.meter span').style.width = s && !s.mute ? Math.min(100, Math.sqrt(s.peak) * 100) + '%' : '0';
+    if (!s) { row.querySelector('.val').textContent = t === 'system' ? 'No speakers' : 'Silent'; return; }
+    if (!mixDragging[t]) range.value = Math.round(s.vol * 100);
+    row.querySelector('.val').textContent = s.mute ? 'Muted' : range.value + '%';
+  });
+}
+
+// The app on the PC sets the sound. A tablet can't reach it, so it asks the PC through OBS.
+function setAudio(target, change) {
+  if (inApp) return appFetch('/audio/set?' + new URLSearchParams({ target, ...change })).then(renderMix).catch(showError);
+  if (connected) call('BroadcastCustomEvent', { eventData: { meetingCameraAudioSet: { target, ...change } } }).catch(() => {});
+}
+
+function onAudioEvent(e) {
+  if (inApp && e.meetingCameraSoundWanted) tabletsWantSound = Date.now() + 5000;
+  if (inApp && e.meetingCameraAudioSet) {
+    const { target, vol, mute } = e.meetingCameraAudioSet;
+    if (MIX.includes(target)) setAudio(target, vol != null ? { vol: Math.round(+vol) } : { mute: mute ? 1 : 0 });
+  }
+  if (!inApp && e.meetingCameraAudio) renderMix(e.meetingCameraAudio);
+}
+
+// A tablet with its Sound page open asks for the readings every couple of seconds.
+function askForSound() {
+  if (!inApp && connected && gridMode && gridPage === 2) {
+    call('BroadcastCustomEvent', { eventData: { meetingCameraSoundWanted: 1 } }).catch(() => {});
+    if (Date.now() - mixSeenAt > 4000) $('mixNote').textContent = 'Waiting for Meeting Camera on the PC…';
+  }
+}
+
+document.querySelectorAll('.mix').forEach(row => {
+  const t = row.dataset.target, range = row.querySelector('input'), btn = row.querySelector('.mute');
+  btn.innerHTML = icon('volume');
+  let sending = null;
+  range.oninput = () => {
+    mixDragging[t] = true;
+    row.querySelector('.val').textContent = range.value + '%';
+    clearTimeout(sending);
+    sending = setTimeout(() => setAudio(t, { vol: range.value }), 50);
+  };
+  range.onchange = () => {
+    clearTimeout(sending);
+    setAudio(t, { vol: range.value });
+    setTimeout(() => { mixDragging[t] = false; }, 600);   // until the new level comes back
+  };
+  btn.onclick = () => setAudio(t, { mute: btn.classList.contains('muted') ? 0 : 1 });
+});
+
+if (inApp) {
+  $('mixer').hidden = false;
+  let mixBusy = false;
+  everyMs(200, async () => {
+    const wanted = Date.now() < tabletsWantSound;
+    if (mixBusy || (document.hidden && !wanted)) return;
+    mixBusy = true;
+    try {
+      const a = await appFetch('/audio');
+      renderMix(a);
+      if (wanted && connected) call('BroadcastCustomEvent', { eventData: { meetingCameraAudio: a } }).catch(() => {});
+    } catch {} finally { mixBusy = false; }
+  });
+} else {
+  everyMs(2000, askForSound);
+}
+
+// ---------------------------------------------------------------------------
 // Grid view: just the shots, big - for a tablet on a stand, or the PC. Each device remembers it;
 // a tablet starts in it.
 // ---------------------------------------------------------------------------
@@ -898,7 +1050,8 @@ function setGridMode(on) {
   if (on) showPage(1, false);
 }
 
-// Two pages side by side: the shot on air full screen (swipe right to it), then all the shots.
+// Three pages side by side: the shot on air full screen (swipe right to it), all the shots, and
+// the sound (swipe left to it).
 let gridPage = 1;
 function showPage(n, smooth = true) {
   gridPage = n;
@@ -907,6 +1060,7 @@ function showPage(n, smooth = true) {
 }
 function renderDots() {
   document.querySelectorAll('.pageDots button').forEach(b => b.setAttribute('aria-current', +b.dataset.page === gridPage));
+  askForSound();   // straight away when the Sound page comes up
 }
 document.querySelectorAll('.pageDots button').forEach(b => { b.onclick = () => showPage(+b.dataset.page); });
 $('pager').addEventListener('scroll', () => {
@@ -1453,7 +1607,7 @@ function renderTrack() {
   const n = track.people.filter(zoneOf).length;
   let view;
   if (!track.src) view = ['help', 'Not set up', 'Click Adjust… and pick the platform camera.'];
-  else if (!track.on) view = ['pause', 'Off', track.offByPick ? 'Turned off when you picked a shot — turn on to follow again'
+  else if (!track.on) view = ['pause', 'Off', track.offByPick ? 'Turned off when a shot was picked (here or on a tablet) — turn on to follow again'
                                                          : 'Turn on to switch shots by where people are'];
   else if (track.error) view = ['help', 'Detector problem', track.error];
   else if (!track.model) view = ['scan', 'Starting…', 'Loading the person detector (first time takes a few seconds)'];
