@@ -1,15 +1,15 @@
 <#
   Start-Meeting.ps1 - gets the meeting PC ready in one go:
     1. Opens OBS with the virtual camera on (if it isn't already running), with its
-       remote control (WebSocket server) switched on so the Meeting Camera page can connect
-    2. Opens the Meeting Camera control page (obs-remote.html)
+       remote control (WebSocket server) switched on so the Meeting AV page can connect
+    2. Opens the Meeting AV control page (obs-remote.html)
     3. Starts the tablet remote (Serve-Remote.ps1) in the background
   JW Library and Zoom are opened by hand.
 
   Easiest: double-click Start-Meeting.bat
   Options:  -Meeting Midweek|Weekend   force a meeting instead of going by the day
             -NoObs                     don't start OBS
-            -AppMode                   skip steps 2-3 (MeetingCamera.exe opens the page and serves tablets itself)
+            -AppMode                   skip steps 2-3 (MeetingAV.exe opens the page and serves tablets itself)
 #>
 param(
   [ValidateSet('Auto', 'Midweek', 'Weekend')] [string]$Meeting = 'Auto',
@@ -50,7 +50,7 @@ function Start-Meeting {
     if (Get-Process obs64 -ErrorAction SilentlyContinue) { Ok 'already running' }
     elseif (Test-Path $ObsExe) {
       # OBS must be started from its own folder or it can't find its files. It starts minimised
-      # to the notification area (by the clock); Meeting Camera is where it's controlled from.
+      # to the notification area (by the clock); Meeting AV is where it's controlled from.
       Start-Process -FilePath $ObsExe -WorkingDirectory (Split-Path $ObsExe) `
         -ArgumentList '--startvirtualcam', '--disable-shutdown-check', '--minimize-to-tray'
       Ok 'started (minimised)'
@@ -60,7 +60,7 @@ function Start-Meeting {
 
   # 2. Camera control page
   if (-not $AppMode) {
-    Step 'Meeting Camera page'
+    Step 'Meeting AV page'
     if (Test-Path $ControlPage) { Start-Process $ControlPage; Ok } else { Fail "not found next to this script" }
 
     # 3. Tablet remote
@@ -80,7 +80,7 @@ function Start-Meeting {
   else { Write-Host "`n  All set.`n" -ForegroundColor Green }
 }
 
-# The Meeting Camera page talks to OBS through its WebSocket server. OBS only reads the setting
+# The Meeting AV page talks to OBS through its WebSocket server. OBS only reads the setting
 # when it starts, so it can be switched on here only while OBS is closed. Returns what was done,
 # or $null if it's off and OBS is running.
 function Enable-ObsWebSocket {

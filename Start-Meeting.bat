@@ -1,5 +1,5 @@
 @echo off
-rem Double-click to get OBS, JW Library and the Meeting Camera page ready.
+rem Double-click to get OBS, JW Library and the Meeting AV page ready.
 rem Add Midweek or Weekend after the name to override today's meeting, e.g. Start-Meeting.bat Weekend
 if "%~1"=="" (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Start-Meeting.ps1"

@@ -1,4 +1,4 @@
-// MeetingCamera.exe - the Meeting Camera page as a desktop app.
+// MeetingAV.exe - the Meeting AV page as a desktop app.
 //   - Opens the page in its own window (WebView2, Edge's engine built into Windows; an Edge app
 //     window if that's missing) and lives in the tray while it's open
 //   - Gets the PC ready (OBS and its virtual camera) by running Start-Meeting.ps1;
@@ -9,7 +9,7 @@
 //   - Keeps a timer for each part and shows it big on a screen the speakers can see (like OnlyT)
 //   - Shows the page what JW Library's second display is showing (OBS only captures a screen
 //     while its scene is on air, so it can't be used to spot media starting)
-// Closing the Meeting Camera window quits the app.
+// Closing the Meeting AV window quits the app.
 // Options: Midweek | Weekend   force a meeting instead of going by the day
 //          -NoSetup            don't run the setup (just serve and open the page)
 //          -NoObs              don't start OBS
@@ -38,12 +38,25 @@ using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
-static class MeetingCamera
+static class MeetingAV
 {
     const int FirstPort = 8080, LastPort = 8089;
     static int Port;
     static readonly string AppDir = AppDomain.CurrentDomain.BaseDirectory;
-    static readonly string DataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MeetingCamera");
+    static readonly string DataDir = DataFolder();
+    // Its settings, the window's saved page settings, the parts... Kept in "MeetingCamera" before the
+    // app was renamed, and moved over the first time.
+    static string DataFolder()
+    {
+        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string dir = Path.Combine(local, "MeetingAV"), old = Path.Combine(local, "MeetingCamera");
+        if (!Directory.Exists(dir) && Directory.Exists(old))
+        {
+            try { Directory.Move(old, dir); }
+            catch { return old; }   // still in use (the old app running): carry on with it as it is
+        }
+        return dir;
+    }
     // 127.0.0.1 rather than localhost, which Windows may send to IPv6 first.
     static string Url { get { return "http://127.0.0.1:" + Port + "/"; } }
 
@@ -56,7 +69,7 @@ static class MeetingCamera
 
     static NotifyIcon Tray;
     static System.Windows.Forms.Timer QuitTimer;
-    static readonly HashSet<string> OpenWindows = new HashSet<string>();   // ids of open Meeting Camera windows
+    static readonly HashSet<string> OpenWindows = new HashSet<string>();   // ids of open Meeting AV windows
     static Control UiThread;
 
     [STAThread]
@@ -79,7 +92,7 @@ static class MeetingCamera
 
         // Already running: just show its window.
         bool first;
-        Mutex single = new Mutex(true, @"Local\MeetingCamera", out first);
+        Mutex single = new Mutex(true, @"Local\MeetingAV", out first);
         if (!first)
         {
             int.TryParse(File.Exists(portFile) ? File.ReadAllText(portFile) : "", out Port);
@@ -92,7 +105,7 @@ static class MeetingCamera
         {
             if (Port > 0) { OpenInEdge(); return 0; }   // the old Serve-Remote.ps1 is serving the page
             MessageBox.Show("Ports " + FirstPort + "-" + LastPort + " are all in use by other programs.",
-                            "Meeting Camera", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            "Meeting AV", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
         File.WriteAllText(portFile, Port.ToString());
@@ -104,11 +117,11 @@ static class MeetingCamera
         UiThread.CreateControl();
         Tray = new NotifyIcon
         {
-            Icon = new Icon(new MemoryStream(Resource("MeetingCamera.ico"))),
-            Text = "Meeting Camera",
+            Icon = new Icon(new MemoryStream(Resource("MeetingAV.ico"))),
+            Text = "Meeting AV",
             Visible = true,
             ContextMenu = new ContextMenu(new[] {
-                new MenuItem("Show Meeting Camera", (s, e) => OpenWindow()) { DefaultItem = true },
+                new MenuItem("Show Meeting AV", (s, e) => OpenWindow()) { DefaultItem = true },
                 new MenuItem("Get ready again", (s, e) => RunSetup(null)),
                 new MenuItem("-"),
                 new MenuItem("Quit", (s, e) => Quit()),
@@ -208,7 +221,7 @@ static class MeetingCamera
         string userData = Path.Combine(DataDir, "WebView2");
         MoveEdgeStorage(userData);
         LoaderReady();
-        AppWindow w = new AppWindow(Url, userData, new Icon(new MemoryStream(Resource("MeetingCamera.ico"))));
+        AppWindow w = new AppWindow(Url, userData, new Icon(new MemoryStream(Resource("MeetingAV.ico"))));
         w.Failed += () => { w.Close(); Window = null; OpenInEdge(); };   // no WebView2 on this PC
         w.FormClosed += (s, e) => { if (!w.HasFailed) Quit(); };
         Window = w;
@@ -310,7 +323,7 @@ static class MeetingCamera
         if (File.Exists(flag)) return;
         try
         {
-            string lnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Meeting Camera.lnk");
+            string lnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Meeting AV.lnk");
             Type shellType = Type.GetTypeFromProgID("WScript.Shell");
             object shell = Activator.CreateInstance(shellType);
             object sc = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { lnk });
@@ -431,18 +444,58 @@ static class MeetingCamera
     }
 
     // Screens for the timer, with which one JW Library uses (not a good choice) and the main one.
+    // Each screen's real resolution and where it is (as Windows has them, whatever the scaling: the
+    // window's own measurements are stretched by the main screen's scaling), numbered as Windows does.
     static string ScreensJson()
     {
         Screen jw = JwTargetScreen();
+        DisplayMode main = new DisplayMode();
+        foreach (Screen sc in Screen.AllScreens) if (sc.Primary) main = Mode(sc.DeviceName);
         List<string> list = new List<string>();
-        int n = 0;
         foreach (Screen sc in Screen.AllScreens)
-            list.Add("{\"name\":" + Json(sc.DeviceName) + ",\"number\":" + (++n) + ",\"main\":" + (sc.Primary ? "true" : "false") +
+        {
+            DisplayMode m = Mode(sc.DeviceName);
+            string where = sc.Primary ? "main" : Where(m, main);
+            list.Add("{\"name\":" + Json(sc.DeviceName) + ",\"number\":" + Regex.Match(sc.DeviceName, "\\d+$").Value +
+                     ",\"main\":" + (sc.Primary ? "true" : "false") + ",\"where\":" + Json(where) +
                      ",\"jw\":" + (jw != null && jw.DeviceName == sc.DeviceName ? "true" : "false") +
-                     ",\"w\":" + sc.Bounds.Width + ",\"h\":" + sc.Bounds.Height + "}");
+                     ",\"w\":" + m.dmPelsWidth + ",\"h\":" + m.dmPelsHeight + "}");
+        }
         string saved = "";
         try { if (File.Exists(TimerScreenFile)) saved = File.ReadAllText(TimerScreenFile).Trim(); } catch { }
         return "{\"screens\":[" + string.Join(",", list) + "],\"saved\":" + Json(saved) + "}";
+    }
+
+    // Which side of the main screen another one is on, by where its middle is.
+    static string Where(DisplayMode m, DisplayMode main)
+    {
+        double dx = (m.dmPositionX + m.dmPelsWidth / 2.0) - (main.dmPositionX + main.dmPelsWidth / 2.0);
+        double dy = (m.dmPositionY + m.dmPelsHeight / 2.0) - (main.dmPositionY + main.dmPelsHeight / 2.0);
+        if (Math.Abs(dy) > Math.Abs(dx)) return dy < 0 ? "above" : "below";
+        return dx < 0 ? "left" : "right";
+    }
+
+    static DisplayMode Mode(string device)
+    {
+        DisplayMode m = new DisplayMode();
+        m.dmSize = (short)Marshal.SizeOf(typeof(DisplayMode));
+        EnumDisplaySettings(device, -1, ref m);   // ENUM_CURRENT_SETTINGS
+        return m;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplaySettings(string device, int mode, ref DisplayMode m);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct DisplayMode   // DEVMODE, as used for screens
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+        public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+        public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+        public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+        public short dmLogPixels;
+        public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+        public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
     }
 
     // Shows the timer screen on the named screen ("" hides it). "auto": the one used last time, or
@@ -574,7 +627,7 @@ static class MeetingCamera
     {
         ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
         HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
-        req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MeetingCamera";
+        req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MeetingAV";
         req.Timeout = 15000;
         using (WebResponse resp = req.GetResponse())
         using (StreamReader r = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
@@ -1039,7 +1092,7 @@ static class MeetingCamera
             string[] target = (parts.Length > 1 ? parts[1] : "").Split('?');
             string path = target[0], query = target.Length > 1 ? target[1] : "";
             byte[] body;
-            // Only the Meeting Camera window on this PC may read the OBS password or control the app:
+            // Only the Meeting AV window on this PC may read the OBS password or control the app:
             // the request must come from this PC, be addressed to localhost (so another website can't
             // borrow the address) and carry a header that other websites can't add without asking first.
             string host, marker;
@@ -1172,7 +1225,7 @@ class TimerWindow : Form
 
     public TimerWindow(string url, string userData, Screen screen)
     {
-        Text = "Meeting Camera timer";
+        Text = "Meeting AV timer";
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         BackColor = Color.Black;
@@ -1200,7 +1253,7 @@ class TimerWindow : Form
     protected override bool ShowWithoutActivation { get { return true; } }
 }
 
-// Meeting Camera's own window: the page in a WebView2 (Edge's engine, part of Windows), so it has
+// Meeting AV's own window: the page in a WebView2 (Edge's engine, part of Windows), so it has
 // its own taskbar button and icon. Links that open a new window go to the normal browser.
 class AppWindow : Form
 {
@@ -1210,7 +1263,7 @@ class AppWindow : Form
 
     public AppWindow(string url, string userData, Icon icon)
     {
-        Text = "Meeting Camera";
+        Text = "Meeting AV";
         Icon = icon;
         Rectangle area = Screen.PrimaryScreen.WorkingArea;
         StartPosition = FormStartPosition.Manual;

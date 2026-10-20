@@ -1,6 +1,6 @@
 {
-  "name": "Meeting Camera",
-  "short_name": "Camera",
+  "name": "Meeting AV",
+  "short_name": "Meeting AV",
   "description": "Control the meeting camera from a tablet",
   "display": "standalone",
   "orientation": "any",

@@ -1,5 +1,5 @@
 <#
-  Serve-Remote.ps1 - lets a tablet or phone on the hall Wi-Fi open the Meeting Camera page.
+  Serve-Remote.ps1 - lets a tablet or phone on the hall Wi-Fi open the Meeting AV page.
   Serves obs-remote.html at http://<this PC>:8080/  (Start-Meeting.ps1 starts it in the background).
   The first time, Windows asks whether to allow it on the network: tick "Private networks".
   Options: -Port 8080   -LocalOnly (only this PC can connect; for testing)
@@ -10,7 +10,7 @@ $page = Join-Path $PSScriptRoot 'obs-remote.html'
 $address = if ($LocalOnly) { [Net.IPAddress]::Loopback } else { [Net.IPAddress]::Any }
 $listener = New-Object Net.Sockets.TcpListener($address, $Port)
 $listener.Start()
-Write-Host "Meeting Camera tablet remote on port $Port - close this window to stop it."
+Write-Host "Meeting AV tablet remote on port $Port - close this window to stop it."
 
 # Addresses a tablet can reach: adapters that are up and have a router (skips WSL/VPN-only adapters).
 function Get-LanIPs {

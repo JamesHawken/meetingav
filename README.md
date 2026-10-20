@@ -1,4 +1,4 @@
-# Meeting Camera
+# Meeting AV
 
 Controls the OBS camera for a congregation meeting on Zoom: pick shots, follow
 whoever is on the platform, cut to the screen when JW Library shows a picture or
@@ -14,13 +14,13 @@ video, and run it all from a tablet.
 
 ## Getting started
 
-1. Copy `MeetingCamera.exe` anywhere and double-click it. It puts a
-   **Meeting Camera** shortcut on the desktop; use that from then on.
+1. Copy `MeetingAV.exe` anywhere and double-click it. It puts a
+   **Meeting AV** shortcut on the desktop; use that from then on.
 2. The first time, it switches on OBS's remote control (close OBS first if it's
    open) and starts OBS minimised by the clock, with the virtual camera on.
 3. Open JW Library and Zoom yourself.
 
-Meeting Camera opens on the holding screen, with a countdown to the meeting.
+Meeting AV opens on the holding screen, with a countdown to the meeting.
 
 ## OBS scenes
 
@@ -38,7 +38,7 @@ Shots are found by their scene names in OBS (not case-sensitive):
 | Holding screen    | `holding`, `countdown`, `waiting` or `welcome` |
 
 Any other scenes appear under **Other scenes**. If there's no holding screen,
-Meeting Camera makes one.
+Meeting AV makes one.
 
 ## During the meeting
 
@@ -55,7 +55,7 @@ Meeting Camera makes one.
   Table: under Follow people → *Adjust…*, set the reader line between a seated
   head and a standing one.
 - **Auto-start:** at the meeting time, turns the camera on and cuts from the
-  holding screen to Platform wide. Set the times under *Change times*.
+  holding screen to Speaker. Set the times under *Change times*.
 - **Grid:** just the shots, big. Swipe right (or tap the left dot) for the shot
   on air, full screen.
 - **Check:** one list of everything that's ready or needs fixing.
@@ -83,13 +83,14 @@ steps 2–3 again.
 
 Run `build.bat`. It uses the C# compiler that comes with Windows, so there's
 nothing to install, and it builds `obs-remote.html`, `timer.html`, `Start-Meeting.ps1`, `lib/`
-and `webview2/` into `MeetingCamera.exe`. A copy of `obs-remote.html` placed next
+and `webview2/` into `MeetingAV.exe`. A copy of `obs-remote.html` placed next
 to the exe is used instead of the built-in one, which helps when trying out
 changes.
 
 | File               | What it is                                                      |
 |--------------------|-----------------------------------------------------------------|
-| `MeetingCamera.cs` | The app: its window, the tablet server, JW Library detection    |
+| `MeetingAV.cs` | The app: its window, the tablet server, JW Library detection    |
+| `MeetingAV.manifest` | Built into the exe: measures every screen in real pixels, whatever its scaling |
 | `obs-remote.html`  | The control page, on the PC and on tablets                      |
 | `timer.html`       | The timer screen the speakers see                               |
 | `Start-Meeting.ps1`| Gets OBS ready (remote control on, started with the virtual camera) |
