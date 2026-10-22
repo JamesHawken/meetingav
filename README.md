@@ -33,7 +33,7 @@ newer `MeetingAV.exe` is committed, it downloads it and a **Restart to update**
 button appears (both can be switched off under Settings → App).
 
 It opens in **Simple** mode: the timer, the picture and the shots. Everything
-automatic keeps running; **More** shows the rest (sound, settings, checks).
+automatic keeps running; **Simple** switches to the full view (sound, settings); **Menu** has the grid view, tablet, checks and settings.
 
 ## OBS scenes
 
@@ -47,6 +47,7 @@ Shots are found by their scene names in OBS (not case-sensitive):
 | Reader (optional) | `reader` or `lecteur`        |
 | Speaker           | `speaker`                    |
 | Speaker + Monitor | `speaker` and `monitor`      |
+| Speaker + Reader (optional) | `speaker` and `reader` |
 | Monitor           | `monitor` or `screen`        |
 | Holding screen    | `holding`, `countdown`, `waiting` or `welcome` |
 
@@ -72,6 +73,9 @@ Meeting AV makes one.
   holding screen to Speaker. Set the times under *Change times*.
 - **Grid:** just the shots, big. Swipe right (or tap the left dot) for the shot
   on air, full screen.
+- **Studies:** starting the Watchtower Study or the Congregation Bible Study on
+  the timer puts the *Speaker + Reader* scene on air, and Auto camera keeps to
+  it while that part runs.
 - **Check:** one list of everything that's ready or needs fixing.
 - **Timer** (like OnlyT): the card lists the next meeting's parts, the midweek
   one's from that week's workbook on wol.jw.org (kept for offline use). Tap a
@@ -82,11 +86,15 @@ Meeting AV makes one.
   first part, the speakers see the time of day; switch **Screen** on to show it, and pick which screen under
   Settings → Timer. In the grid view, a fourth page (swipe left past Sound)
   controls it from a tablet.
+- **Countdown:** in the last 5 minutes before the meeting, the speakers' screen
+  and JW Library's screen (the hall TV) show "Meeting starts in 4:59…". It steps
+  aside while JW Library shows a picture or video, and goes at the start time.
+  Settings → Timer switches the one on JW Library's screen off.
 
 ## Tablet or phone
 
 1. Join the same Wi-Fi as the PC.
-2. On the PC, click **Tablet** and scan the code with the tablet's camera.
+2. On the PC, click **Menu** → **Connect a tablet** and scan the code with the tablet's camera.
 3. Once it shows the shots, add it to the home screen (on an iPad: Share →
    **Add to Home Screen**). It then opens full screen, already connected.
 

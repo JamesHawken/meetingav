@@ -6,7 +6,8 @@
 <title>Meeting AV timer</title>
 <!-- The timer screen, like OnlyT: shown full screen where the speakers can see it. MeetingAV.exe
      keeps the time; this only shows it. Green while there's time, amber in the last minute, red and
-     counting up once over time. With no part loaded it shows the time of day. -->
+     counting up once over time. With no part loaded it shows the time of day - and in the last
+     5 minutes before the meeting, a countdown to it. -->
 <style>
   html, body { margin: 0; height: 100%; background: #000; color: #e5e7eb; overflow: hidden; cursor: none;
                font-family: "Segoe UI", system-ui, sans-serif; }
@@ -16,6 +17,7 @@
   #time { font-size: min(40vw, 64vh); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums;
           letter-spacing: -.02em; transition: color .3s; }
   #time.clock { font-weight: 500; color: #d1d5db; font-size: min(26vw, 48vh); }
+  #time.soon { color: #f3f4f6; }
   #time.ok { color: #22c55e; }
   #time.warn { color: #f59e0b; }
   #time.over { color: #ef4444; }
@@ -31,6 +33,8 @@
 <script>
 const $ = id => document.getElementById(id);
 let timer = null, offset = 0;   // the app's clock minus this one
+// ?countdown: the countdown laid over JW Library's screen before the meeting - nothing else.
+const countdownOnly = location.search.includes('countdown');
 
 // m:ss - rounded up while counting down (so it reaches 0:00 at zero), down once over time.
 function fmt(ms) {
@@ -40,6 +44,22 @@ function fmt(ms) {
 
 function render() {
   const time = $('time'), bar = $('bar');
+  // The last 5 minutes before the meeting: a countdown to it.
+  const toGo = timer && (countdownOnly || !timer.length) && timer.meetingAt ? timer.meetingAt - (Date.now() + offset) : 0;
+  if (toGo > 0 && toGo <= 5 * 60000) {
+    time.className = 'soon';
+    time.textContent = fmt(toGo);
+    time.style.fontSize = '';
+    $('label').textContent = 'Meeting starts in';
+    bar.className = '';
+    bar.style.width = (1 - toGo / (5 * 60000)) * 100 + '%';
+    return;
+  }
+  if (countdownOnly) {   // before the countdown or once it's over (the window closes then anyway)
+    time.textContent = $('label').textContent = '';
+    bar.style.width = '0';
+    return;
+  }
   if (!timer || !timer.length) {
     time.className = 'clock';
     time.style.fontSize = '';

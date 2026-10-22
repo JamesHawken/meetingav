@@ -144,6 +144,9 @@ static class MeetingAV
         CheckForUpdate(false);
         OpenWindow();
         ShowTimerScreen("auto", true);   // where it was last time, if that screen is still there
+        CountdownTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        CountdownTimer.Tick += (s, e) => WatchCountdown();
+        CountdownTimer.Start();
         if (setup) RunSetup(SetupMeeting);
         Application.Run();
         GC.KeepAlive(Single);
@@ -415,6 +418,8 @@ static class MeetingAV
     static long TimerLeft;     // while stopped: what's left, below 0 once over time (ms)
     static long TimerLength;   // the part's length (ms); 0 = no part loaded, the screen shows the time of day
     static string TimerLabel = "";
+    static long MeetingAt;     // when the next meeting starts (ms since 1970), told by the page: the
+                               // timer screen counts down to it in the last 5 minutes
     static TimerWindow TimerForm;
     static string TimerScreen = "";   // the screen it's on, while shown
     static string TimerScreenFile { get { return Path.Combine(DataDir, "timer-screen.txt"); } }
@@ -427,7 +432,7 @@ static class MeetingAV
             return "{\"running\":" + (TimerRunning ? "true" : "false") + ",\"endsAt\":" + TimerEndsAt +
                    ",\"left\":" + TimerLeft + ",\"length\":" + TimerLength + ",\"label\":" + Json(TimerLabel) +
                    ",\"now\":" + NowMs() + ",\"shown\":" + (TimerScreen != "" ? "true" : "false") +
-                   ",\"screen\":" + Json(TimerScreen) + "}";
+                   ",\"screen\":" + Json(TimerScreen) + ",\"meetingAt\":" + MeetingAt + "}";
     }
 
     // set (load a part of secs), start, stop, reset (back to the part's length), add (secs, may be
@@ -681,6 +686,39 @@ static class MeetingAV
                ",\"updates\":" + (File.Exists(NoUpdatesFile) ? "false" : "true") +
                ",\"installed\":" + Json(File.GetLastWriteTime(Application.ExecutablePath).ToString("d MMM yyyy, HH:mm", System.Globalization.CultureInfo.InvariantCulture)) +
                ",\"update\":" + Json(UpdateState) + "}";
+    }
+
+    // ---- Countdown on JW Library's screen ------------------------------------------------
+    // In the last 5 minutes before a meeting, a countdown covers the screen JW Library shows on (the
+    // hall's TV), so everyone knows when it starts. It steps aside while JW Library shows a picture or
+    // video, and goes at the start time, leaving the yeartext. Settings > Timer can switch it off.
+
+    static bool CountdownOn = true;
+    static TimerWindow CountdownForm;
+    static System.Windows.Forms.Timer CountdownTimer;
+
+    static void WatchCountdown()   // every second, on the UI thread
+    {
+        long left = MeetingAt - NowMs();
+        bool soon = CountdownOn && MeetingAt > 0 && left > 0 && left <= 5 * 60000;
+        if (soon) JwStateAskedAt = DateTime.Now;   // keeps the watch on what JW Library has open
+        Screen screen = soon ? JwTargetScreen() : null;
+        bool want = screen != null && JwMedia != "image" && JwMedia != "video";
+        if (want && (CountdownForm == null || CountdownForm.IsDisposed))
+        {
+            try
+            {
+                LoaderReady();
+                CountdownForm = new TimerWindow(Url + "timer-screen?countdown", Path.Combine(DataDir, "WebView2"), screen, true);
+                CountdownForm.Show();
+            }
+            catch { CountdownForm = null; }
+        }
+        else if (!want && CountdownForm != null)
+        {
+            if (!CountdownForm.IsDisposed) CountdownForm.Close();
+            CountdownForm = null;
+        }
     }
 
     // ---- Meeting parts, for the timer ------------------------------------------------
@@ -1313,6 +1351,13 @@ static class MeetingAV
             }
             else if (path == "/timer" && local)
                 SendJson(stream, TimerJson());
+            else if (path == "/timer/meeting" && local)
+            {
+                Match at = Regex.Match(query, "at=(\\d+)");
+                MeetingAt = at.Success ? long.Parse(at.Groups[1].Value) : 0;
+                CountdownOn = !query.Contains("countdown=0");
+                SendJson(stream, "{}");
+            }
             else if (path == "/timer/set" && local)
             {
                 Match a = Regex.Match(query, "action=(\\w+)"), n = Regex.Match(query, "secs=(-?\\d+)"), l = Regex.Match(query, "label=([^&]*)");
@@ -1391,9 +1436,10 @@ class TimerWindow : Form
 {
     readonly WebView2 view = new WebView2 { Dock = DockStyle.Fill };
 
-    public TimerWindow(string url, string userData, Screen screen)
+    public TimerWindow(string url, string userData, Screen screen, bool onTop = false)
     {
-        Text = "Meeting AV timer";
+        Text = onTop ? "Meeting AV countdown" : "Meeting AV timer";
+        TopMost = onTop;   // the countdown goes over JW Library's own screen
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         BackColor = Color.Black;
