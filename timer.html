@@ -85,9 +85,18 @@ async function poll() {
   } catch {}
 }
 
+// Ticks from a worker: this window never has the focus and is often covered, and the browser slows
+// a page's own timers then, so the countdown would jump instead of ticking every second.
+function every(ms, fn) {
+  try {
+    const w = new Worker(URL.createObjectURL(new Blob([`setInterval(() => postMessage(0), ${ms})`], { type: 'text/javascript' })));
+    w.onmessage = fn;
+    w.onerror = () => { w.terminate(); setInterval(fn, ms); };
+  } catch { setInterval(fn, ms); }
+}
 poll();
-setInterval(poll, 400);
-setInterval(render, 100);
+every(400, poll);
+every(100, render);
 render();
 </script>
 </body>

@@ -13,16 +13,28 @@
 <meta name="apple-mobile-web-app-title" content="Meeting AV">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#111317">
+<script>try {
+  document.documentElement.dataset.theme = localStorage.getItem('obsremote.theme') || '';
+  document.documentElement.style.zoom = localStorage.getItem('obsremote.size') || '';
+} catch {}</script>
 <style>
   :root {
     --bg: #f4f5f7; --panel: #fff; --text: #1b1d22; --muted: #6b7280; --line: #e2e4e9;
     --accent: #2563eb; --accent-soft: #dbe6fd; --live: #dc2626; --ok: #16a34a; --warn: #b45309;
     --btn: #eef0f4; --btn-hover: #e2e6ee;
   }
+  /* The look: like Windows (light or dark), or picked under Settings → This PC. Dim is for a darkened
+     hall: near-black, with soft text, so the screen doesn't glow. */
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #111317; --panel: #1a1d23; --text: #eceef2; --muted: #9097a3; --line: #2a2e36;
-            --accent-soft: #1e2a44; --warn: #f59e0b; --btn: #242830; --btn-hover: #2e333d; }
+    :root:not([data-theme="light"]) { --bg: #111317; --panel: #1a1d23; --text: #eceef2; --muted: #9097a3; --line: #2a2e36;
+            --accent-soft: #1e2a44; --warn: #f59e0b; --btn: #242830; --btn-hover: #2e333d; color-scheme: dark; }
   }
+  :root[data-theme="dark"] { --bg: #111317; --panel: #1a1d23; --text: #eceef2; --muted: #9097a3; --line: #2a2e36;
+            --accent-soft: #1e2a44; --warn: #f59e0b; --btn: #242830; --btn-hover: #2e333d; color-scheme: dark; }
+  :root[data-theme="dim"] { --bg: #000; --panel: #0a0b0d; --text: #a8aeb8; --muted: #666c76; --line: #1a1d22;
+            --accent: #3567c4; --accent-soft: #121a2a; --live: #b42323; --ok: #178a3f; --warn: #c98a16;
+            --btn: #14161a; --btn-hover: #1b1e23; color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -70,8 +82,14 @@
   .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
   .dot.on { background: var(--ok); }
-  /* Everything needed during the meeting fits on one screen: picture + shots, then status cards. */
+  /* Everything needed during the meeting fits on one screen: the picture, and the shots beside it with
+     the sound under them. On a wide screen the picture takes what the window's height allows. */
   .top { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start; }
+  @media (min-width: 1100px) {
+    main { max-width: 1760px; }
+    .top { grid-template-columns: minmax(0, 1fr) clamp(400px, 40%, 680px); }
+    .top .preview, .top .camBtn { width: min(100%, var(--picW, 100%)); min-width: 480px; margin-left: auto; margin-right: auto; }
+  }
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 16px; }
   @media (max-width: 900px) { .top, .cards { grid-template-columns: 1fr; } }
   .cards .panel { display: flex; flex-direction: column; }
@@ -100,7 +118,11 @@
 
   .rowLabel { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin: 4px 2px 6px; }
   .rowLabel + .stage { margin-bottom: 14px; }
-  .stage { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stage + .stage { margin-top: 8px; }
+  /* Every row of shots in the same columns, as many as the longest row has, filling the panel's
+     width; in a narrow panel they wrap rather than shrink below 110px. */
+  .stage { display: grid; gap: 8px;
+           grid-template-columns: repeat(auto-fill, minmax(max(110px, calc((100% - (var(--cols, 4) - 1) * 8px) / var(--cols, 4))), 1fr)); }
   .shot { padding: 0; overflow: hidden; text-align: left; display: flex; flex-direction: column; border: 3px solid transparent; }
   .shot .thumb { aspect-ratio: 16/9; background: #000; width: 100%; }
   .shot .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -111,7 +133,7 @@
   .shot .ico svg.i { width: 16px; height: 16px; }
   .shot .text { flex: 1; min-width: 0; }
   .shot .name { font-weight: 600; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;
-               -webkit-box-orient: vertical; overflow-wrap: anywhere; }   /* up to two lines, never cut short */
+               -webkit-box-orient: vertical; overflow-wrap: break-word; }   /* up to two lines, broken between words */
   .shot .hint { font-size: 12px; color: var(--muted); }
   .shot .key { font: 12px ui-monospace, monospace; color: var(--muted); flex: none; align-self: flex-start; }
   .shot.active { border-color: var(--accent); background: var(--accent); color: #fff; }
@@ -125,6 +147,15 @@
   /* The thumbnail says what the shot is; the icon only helps on empty slots. */
   .shot .hint, .shot:not(.missing) .ico { display: none; }
   .shot.missing .hint { display: block; }
+  /* The name sits on the thumbnail, so a tile is just the picture: the shots fit beside the big picture. */
+  .shot { position: relative; }
+  .shot:not(.missing) .meta { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 8px 6px; color: #fff;
+                              background: linear-gradient(transparent, rgba(0,0,0,.8)); }
+  .shot:not(.missing) .key { color: rgba(255,255,255,.75); align-self: flex-end; }
+  .shot:not(.missing) .name { font-size: 14px; }
+  .shot.active:not(.missing) .meta { background: var(--accent); padding-top: 6px; }
+  body.camLive .shot.active:not(.missing) .meta { background: var(--live); }
+  body.touch .shot:not(.missing) .meta { padding: 18px 10px 8px; }
 
   /* Grid view: only the shots, as big as the screen allows. Swipe right for the shot on air, full screen,
      and left for the sound, then the timer.
@@ -297,12 +328,32 @@
   /* Timer: a slim bar above everything - the time and its buttons, then the meeting's parts in a row. */
   .timerBar { margin-bottom: 16px; padding: 12px 16px; }
   /* Follow people as a tick on the shots: ticked, it picks the shot; unticked, you do. */
-  .autoRow { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: -4px 0 10px; }
+  .autoRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; margin: -4px 0 12px; }
+  .autoTick .q { margin-left: 2px; }
   .autoTick { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; cursor: pointer;
               min-width: 0; white-space: nowrap; }
   .autoTick input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex: none; }
+  /* JW Library's meeting media and playlists: two small buttons in the Shots heading (where the
+     app has them, the tiles' numbers say the keys). */
+  .jwBtns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .jwMedia { white-space: nowrap; }
+  .panelHead:has(.jwBtns) { flex-wrap: wrap; }
+  .panelHead:has(.jwBtns button:not([hidden])) #shotsHint { display: none; }
+  .jwMedia { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 13px; font-weight: 600; border-radius: 8px; }
+  .jwMedia svg.i { width: 15px; height: 15px; }
+  /* Hall TV: JW Library | Zoom - the one on the TV is filled in. */
+  .tvPick { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; background: var(--btn); white-space: nowrap; }
+  .tvPick .tvLabel { display: flex; align-items: center; gap: 6px; padding: 0 8px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .tvPick .tvLabel svg.i { width: 15px; height: 15px; }
+  .tvPick button { padding: 4px 10px; font-size: 13px; font-weight: 600; border-radius: 7px; background: none; color: var(--muted); }
+  .tvPick button:hover { background: var(--btn-hover); color: var(--text); }
+  .tvPick button[aria-pressed="true"] { background: var(--accent); color: #fff; cursor: default; }
+  .tvPick button.going { background: var(--btn-hover); color: var(--text); }
+  body.touch .tvPick button { padding: 8px 14px; font-size: 15px; }
+  body.touch .jwMedia { padding: 10px 14px; font-size: 15px; }
   .tickStatus { font-weight: 400; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
   .tickStatus:not(:empty)::before { content: "· "; }
+  .tickStatus:empty { display: none; }
   label.tick { flex-direction: row; align-items: center; gap: 10px; font-size: 15px; color: var(--text); }
   label.tick input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
   .timerTop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -312,6 +363,9 @@
   .timerBig.ok { color: var(--ok); } .timerBig.warn { color: var(--warn); } .timerBig.over { color: var(--live); }
   .timerBig.paused { opacity: .55; }
   .timerLabel { font-size: 13px; color: var(--muted); min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .timerNext, .tNext { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .timerNext:empty, .tNext:empty { display: none; }
+  .tNext { text-align: center; font-size: 17px; color: var(--muted); }
   .timerTop button { padding: 10px 12px; flex: none; display: flex; align-items: center; gap: 6px; }
   .timerTop .timerGo { background: var(--accent); color: #fff; font-weight: 700; min-width: 96px; justify-content: center; }
   .timerTop .timerGo.running { background: var(--live); }
@@ -319,8 +373,7 @@
   .timerOther { display: flex; align-items: center; gap: 6px; margin-left: 8px; font-size: 13px; color: var(--muted); }
   .timerOther input { width: 60px; padding: 8px; text-align: center; font-variant-numeric: tabular-nums; }
   .timerTop .toggle { margin-left: 8px; }
-  .timerParts { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; padding-bottom: 4px; align-items: center;
-                 scrollbar-width: thin; }
+  .timerParts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
   .timerParts:empty { display: none; }
   .timerParts .more { background: none; color: var(--accent); font-weight: 600; }
   .timerParts button { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 13px; border-radius: 8px; max-width: 260px; }
@@ -393,10 +446,23 @@
   .tabs button { background: none; border-radius: 0; padding: 10px 12px; color: var(--muted); font-weight: 600;
                  border-bottom: 3px solid transparent; white-space: nowrap; }
   .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
-  [data-pane] { padding-top: 14px; }
+  [data-pane] { padding-top: 10px; }
+  .paneHead { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .paneHead.first { margin-top: 4px; padding-top: 10px; border-top: 0; }
+  .paneHead h3 { margin: 0; font-size: 16px; }
+  .paneHead p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
   .help { font-size: 13px; color: var(--muted); margin-top: 10px; }
   kbd { font: 12px ui-monospace, monospace; background: var(--btn); padding: 1px 6px; border-radius: 4px; }
   [hidden] { display: none !important; }
+  /* A short note at the bottom for a couple of seconds: "Speaker on air", "Settings saved"… */
+  #toast { position: fixed; z-index: 40; left: 50%; bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px));
+           transform: translate(-50%, 12px); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+           padding: 10px 18px; border-radius: 999px; background: var(--text); color: var(--bg); font-weight: 600;
+           font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.3); max-width: calc(100vw - 32px);
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  body.gridMode #toast { bottom: max(48px, calc(env(safe-area-inset-bottom) + 40px)); }
+  body.touch #toast { font-size: 16px; padding: 12px 22px; }
 
   .alerts { position: sticky; top: 8px; z-index: 10; display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
   .alert { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px;
@@ -432,13 +498,14 @@
     <div class="status"><span class="dot" id="dot"></span><span id="statusText">Not connected</span></div>
     <div class="headBtns">
       <button id="updateBtn" class="update" hidden title="A new version is downloaded: restart to use it"><i data-icon="download"></i><span class="lbl">Restart to update</span></button>
+      <button id="arrangeBtn" hidden title="Meeting AV on the left of this screen, JW Library and Zoom on the right"><i data-icon="columns"></i><span class="lbl">Arrange</span></button>
       <div class="menu full">
         <button id="menuBtn" aria-haspopup="true"><i data-icon="list"></i><span class="lbl">Menu</span></button>
         <div class="menuPop" id="menuPop" hidden>
           <button id="gridBtn" title="Just the shots, big"><i data-icon="grid"></i>Grid view</button>
           <button id="tabletBtn" data-open="tablet" title="Connect a tablet or phone"><i data-icon="tablet"></i>Connect a tablet</button>
           <button id="checkBtn" title="Check everything is ready"><i data-icon="check"></i>Check everything</button>
-          <button data-open="connection" title="Settings"><i data-icon="sliders"></i>Settings</button>
+          <button data-open="meeting" title="Settings"><i data-icon="sliders"></i>Settings</button>
         </div>
       </div>
       <button id="viewBtn" class="mainOnly"></button>
@@ -478,6 +545,7 @@
         <div class="tWrap">
           <div class="tBig" id="tBig">—</div>
           <div class="tLabel" id="tLabel"></div>
+          <div class="tNext" id="tNext"></div>
           <div class="tButtons">
             <button id="tStart" class="timerGo"></button>
             <button id="tMinus" title="One minute less">−1</button>
@@ -509,7 +577,7 @@
   <section class="panel timerBar" id="timerPanel" hidden>
     <div class="timerTop">
       <span class="timerIco"><i data-icon="timer"></i></span>
-      <div class="timerTime"><div class="timerBig" id="timerBig">—</div><div class="timerLabel" id="timerLabel"></div></div>
+      <div class="timerTime"><div class="timerBig" id="timerBig">—</div><div class="timerLabel" id="timerLabel"></div><div class="timerNext" id="timerNext"></div></div>
       <button id="timerStart" class="timerGo"></button>
       <button id="timerMinus" title="One minute less">−1</button>
       <button id="timerPlus" title="One minute more">+1</button>
@@ -518,7 +586,8 @@
         <input id="timerMins" type="number" min="1" max="120" value="5" inputmode="numeric"><span>min</span>
         <button id="timerLoad">Load</button>
       </span>
-      <button class="toggle" id="timerScreenBtn" role="switch" title="Show the timer on a screen the speakers can see (Settings → Timer picks which)">Screen<span class="switch"></span></button>
+      <button id="jwBackBtn" hidden title="The TV shows the countdown until the start; this gives JW Library its screen back now">JW Library on the TV</button>
+      <button class="toggle" id="timerScreenBtn" role="switch" title="Show the timer on a screen the speakers can see (Settings → Meeting picks which)">Screen<span class="switch"></span></button>
     </div>
     <div class="timerParts" id="timerParts"></div>
   </section>
@@ -533,6 +602,31 @@
         </div>
         <button class="camBtn" id="camBtn" disabled></button>
       </section>
+    </div>
+    <div class="side">
+      <section class="panel">
+        <div class="panelHead">
+          <h2><i data-icon="film"></i>Shots</h2>
+          <span class="hint" id="shotsHint"></span>
+          <span class="jwBtns">
+            <button id="jwMediaBtn" class="jwMedia" hidden title="JW Library: this week's meeting, its pictures and videos"><i data-icon="image"></i>Meeting media</button>
+            <button id="jwPlaylistsBtn" class="jwMedia" hidden title="JW Library: your playlists"><i data-icon="list"></i>Playlists</button>
+            <span class="tvPick" id="tvPick" hidden title="What the hall's TV shows: JW Library's screen, or Zoom's second window (everyone in the meeting)">
+              <span class="tvLabel"><i data-icon="monitor"></i>Hall TV</span>
+              <button data-tv="jw" aria-pressed="true">JW Library</button>
+              <button data-tv="zoom" aria-pressed="false">Zoom</button>
+            </span>
+          </span>
+
+        </div>
+        <div class="autoRow">
+          <label class="autoTick" id="trackTick" title="Follow people: switch shots by where people are on the platform (Settings → Shots)">
+            <input type="checkbox" id="trackChk">Auto camera<span class="tickStatus" id="trackStatus"></span></label>
+          <label class="autoTick" id="mediaTick" title="JW Library media: a picture cuts to Speaker + Monitor, a video to Monitor, and back when it's closed (Settings → Shots)">
+            <input type="checkbox" id="mediaChk">Auto media<span class="tickStatus" id="mediaStatus"></span></label>
+        </div>
+        <div id="shots"><div class="empty">Waiting for OBS…</div></div>
+      </section>
       <section class="panel" id="mixPanel" hidden>
         <div class="panelHead"><h2><i data-icon="volume"></i>Sound</h2></div>
         <div class="mixer">
@@ -545,21 +639,6 @@
         </div>
       </section>
     </div>
-    <div class="side">
-      <section class="panel">
-        <div class="panelHead">
-          <h2><i data-icon="film"></i>Shots</h2>
-          <span class="hint" id="shotsHint"></span>
-        </div>
-        <div class="autoRow">
-          <label class="autoTick" id="trackTick" title="Follow people: switch shots by where people are on the platform (Settings → Follow people)">
-            <input type="checkbox" id="trackChk">Auto camera<span class="tickStatus" id="trackStatus"></span></label>
-          <label class="autoTick" id="mediaTick" title="JW Library media: a picture cuts to Speaker + Monitor, a video to Monitor, and back when it's closed (Settings → JW Library)">
-            <input type="checkbox" id="mediaChk">Auto media<span class="tickStatus" id="mediaStatus"></span></label>
-        </div>
-        <div id="shots"><div class="empty">Waiting for OBS…</div></div>
-      </section>
-    </div>
   </div>
 
   <div class="cards">
@@ -569,6 +648,8 @@
     </section>
   </div>
 </main>
+
+<div id="toast" role="status" aria-live="polite"></div>
 
 <dialog id="guideDlg">
   <div class="dlgHead">
@@ -593,14 +674,10 @@
     <button class="dlgClose" title="Close"><i data-icon="x"></i></button>
   </div>
   <nav class="tabs" id="tabs">
-    <button data-tab="connection">OBS connection</button>
-    <button data-tab="times">Meeting times</button>
-    <button data-tab="jw" class="mainOnly">JW Library</button>
-    <button data-tab="track" class="mainOnly">Follow people</button>
-    <button data-tab="layers">Layers</button>
-    <button data-tab="tablet" class="mainOnly">Tablet</button>
-    <button data-tab="timer" class="mainOnly">Timer</button>
-    <button data-tab="app" class="mainOnly">App</button>
+    <button data-tab="meeting">Meeting</button>
+    <button data-tab="shots">Shots</button>
+    <button data-tab="links">Connections</button>
+    <button data-tab="pc" id="pcTab">This PC</button>
   </nav>
   <div class="dlgBody">
     <div data-pane="connection">
@@ -614,7 +691,7 @@
       <div class="help">
         In OBS: <b>Tools → WebSocket Server Settings</b> → tick <i>Enable WebSocket server</i>,
         then click <i>Show Connect Info</i> to see the port and password.
-        <br>Shortcuts: <kbd>V</kbd> start/stop camera · <kbd>A</kbd> JW Library media on/off · number keys switch shots.
+        <br>Shortcuts: <kbd>Space</kbd> start/stop the timer · <kbd>V</kbd> start/stop camera · <kbd>A</kbd> JW Library media on/off · number keys switch shots.
       </div>
     </div>
 
@@ -694,6 +771,30 @@
     </div>
 
     <div data-pane="tablet"><div id="remoteBox"></div></div>
+    <div data-pane="switching">
+      <label class="tick"><input type="checkbox" id="fadeChk"> Fade when Meeting AV changes the shot by itself
+        (Auto camera, Auto media, the studies, auto-start)</label>
+      <p class="help">A shot you pick yourself always cuts straight away.</p>
+    </div>
+    <div data-pane="look">
+      <div class="setup" style="margin-top:0">
+        <label>Look
+          <select id="themeSel">
+            <option value="">Same as Windows</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="dim">Dim — for a darkened hall</option>
+          </select></label>
+        <label>Size
+          <select id="sizeSel">
+            <option value="1.15">Larger</option>
+            <option value="">Normal</option>
+            <option value="0.9">Compact — fits more on the screen</option>
+            <option value="0.8">More compact</option>
+            <option value="0.7">Smallest</option>
+          </select></label>
+      </div>
+    </div>
     <div data-pane="app">
       <div class="setup" style="margin-top:0">
         <label class="tick"><input type="checkbox" id="appStartup"> Start Meeting AV when Windows starts</label>
@@ -701,13 +802,21 @@
       </div>
       <div class="actions"><button id="appCheck">Check for updates now</button><button id="guideBtn"><i data-icon="wand"></i>Run the setup guide</button></div>
       <p class="help" id="appInfo"></p>
+      <div class="actions"><button id="saveSettings"><i data-icon="download"></i>Save settings to a file</button><button id="loadSettings">Load settings from a file</button>
+        <input type="file" id="settingsFile" accept=".json,application/json" hidden></div>
+      <p class="help" id="settingsInfo">For a new or backup PC: the meeting times, shots, following people, sound and timer
+        choices go in one file. Load it in Meeting AV on the other PC. The OBS scenes move separately: in OBS,
+        Scene Collection → Export, then Import on the other PC.</p>
     </div>
     <div data-pane="timer">
       <div class="setup" style="margin-top:0">
         <label>Show the timer on
           <select id="timerScreen"></select></label>
         <label class="tick"><input type="checkbox" id="jwCountdown"> Before the meeting, show a 5-minute countdown on
-          JW Library’s screen (it steps aside for pictures and videos)</label>
+          JW Library’s screen (the TV)</label>
+        <p class="help" style="margin:0">For the countdown, Meeting AV switches JW Library’s second display off, and
+          back on as it reaches 0:00, leaving JW Library on the meeting’s media. Pictures and videos
+          reach the TV again once it’s back; <b>JW Library on the TV</b> by the timer gives it back sooner.</p>
       </div>
       <p class="help">Pick a screen the speakers can see. It fills that screen: green while there's time, amber in the
         last minute, red and counting up once over time. With no part loaded it shows the time of day.
@@ -730,7 +839,7 @@
 <script>
 // Minimal obs-websocket v5 client (OBS 28+ ships the server built in).
 const $ = id => document.getElementById(id);
-const SUBSCRIBE = 1 | 4 | 8 | 64 | 128; // General, Scenes, Inputs, Outputs, SceneItems
+const SUBSCRIBE = 1 | 4 | 8 | 16 | 64 | 128; // General, Scenes, Inputs, Transitions, Outputs, SceneItems
 const SUB_VOLUME = 1 << 16;             // InputVolumeMeters, only while an audio source is picked
 // MeetingAV.exe (or Serve-Remote.ps1) serves this page to tablets on this port; the exe moves
 // to 8081, 8082… if something else already has 8080.
@@ -776,6 +885,7 @@ const ICONS = {
   book: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5v-2z"/><path d="M8 7h8M8 11h6"/>',
   download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
   more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+  columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/><path d="M12 12h9"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   list: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="m3 6 1 1 2-2"/><path d="m3 12 1 1 2-2"/><path d="m3 18 1 1 2-2"/>',
   sliders: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
@@ -799,8 +909,8 @@ const SLOTS = {
 };
 const OPTIONAL_SLOTS = ['reader', 'spkrdr'];   // shown only when OBS has the scene
 const ROWS = [
-  { label: ['◀ Left', 'Platform', 'Right ▶'], slots: ['demo', 'wide', 'reader', 'table'] },
-  { label: ['Speaker & screen', 'Before the meeting'], slots: ['speaker', 'spkmon', 'spkrdr', 'monitor', 'holding'] },
+  { slots: ['demo', 'wide', 'reader', 'table'] },   // the platform, left to right
+  { slots: ['speaker', 'spkmon', 'spkrdr', 'monitor', 'holding'] },
 ];
 // What JW Library is showing → which slot to cut to.
 const AUTO_TARGET = { image: 'spkmon', video: 'monitor' };
@@ -814,6 +924,22 @@ const thumbImgs = new Map();  // sceneName -> <img> on its button
 const store = {
   get(k, d) { try { return localStorage.getItem('obsremote.' + k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem('obsremote.' + k, v); } catch {} },
+};
+
+// The look (Settings → This PC): set before the page shows, by the line in <head>; changed here.
+$('themeSel').value = store.get('theme', '');
+$('themeSel').onchange = e => {
+  store.set('theme', e.target.value);
+  document.documentElement.dataset.theme = e.target.value;
+  toast('Look changed');
+};
+// Size: everything scaled down (or up) together, so more (or less) fits on the screen.
+$('sizeSel').value = store.get('size', '');
+$('sizeSel').onchange = e => {
+  store.set('size', e.target.value);
+  document.documentElement.style.zoom = e.target.value;
+  fitPicture();
+  toast('Size changed');
 };
 
 async function sha256b64(text) {
@@ -916,7 +1042,7 @@ async function connect(typed = false) {
       state.wasConnected = true;
       setStatus(true, 'Connected to OBS');
       hideMsg();
-      if ($('settingsDlg').open && settingsTab === 'connection') $('settingsDlg').close();
+      if ($('settingsDlg').open && settingsTab === 'links') $('settingsDlg').close();
       loadAll();
     } else if (op === 5) {
       onEvent(d.eventType, d.eventData || {});
@@ -969,6 +1095,7 @@ async function loadAll() {
   holdingOnStart();
   loadItems();
   loadTimes().catch(() => {});
+  loadTransitions();
   await fillSourcePickers(inputs.inputs.map(i => i.inputName));
 }
 
@@ -983,9 +1110,10 @@ async function loadItems() {
 
 function onEvent(type, e) {
   switch (type) {
-    case 'CurrentProgramSceneChanged': state.current = e.sceneName; renderShots(); loadItems(); break;
+    case 'CurrentProgramSceneChanged': state.current = e.sceneName; renderShots(); loadItems(); toast(`${shotName(e.sceneName)} on air`); break;
     case 'SceneListChanged': state.scenes = e.scenes; renderShots(); break;
-    case 'VirtualcamStateChanged': setCam(e.outputActive); break;
+    case 'VirtualcamStateChanged': setCam(e.outputActive); toast(e.outputActive ? 'Camera on — live to Zoom' : 'Camera off'); break;
+    case 'CurrentSceneTransitionChanged': trans.current = e.transitionName; break;
     case 'CustomEvent':
       onAudioEvent(e);
       onTimerEvent(e);
@@ -1093,12 +1221,12 @@ function renderShots() {
   if (!state.scenes.length) { box.innerHTML = '<div class="empty">No scenes yet — add them in OBS.</div>'; return; }
 
   const { bySlot, others } = layout();
+  const rowLengths = ROWS.map(r => r.slots.filter(k => !OPTIONAL_SLOTS.includes(k) || bySlot[k]).length);
+  box.style.setProperty('--cols', Math.min(5, Math.max(...rowLengths)));
   for (const row of ROWS) {
-    box.appendChild(rowLabel(row.label));
     const grid = document.createElement('div');
     grid.className = 'stage';
     const slots = row.slots.filter(k => !OPTIONAL_SLOTS.includes(k) || bySlot[k]);
-    grid.style.gridTemplateColumns = `repeat(${slots.length}, 1fr)`;
     slots.forEach(k => grid.appendChild(shotButton(SLOTS[k].short || SLOTS[k].title, SLOTS[k].hint, SLOTS[k].icon, bySlot[k])));
     box.appendChild(grid);
   }
@@ -1137,7 +1265,36 @@ function renderItems() {
   if (!state.items.length) box.innerHTML = '<div class="empty">This scene has no layers.</div>';
 }
 
-function switchScene(name) { call('SetCurrentProgramScene', { sceneName: name }).catch(showError); }
+// Shot changes: Meeting AV's own (Auto camera, Auto media, the studies, auto-start) fade if ticked
+// under Settings → Shots; a shot picked by hand always cuts. OBS's Cut and Fade are found by kind,
+// as their names depend on OBS's language.
+const FADE_MS = 300;
+const trans = { cut: '', fade: '', current: '', durationSet: false };
+async function loadTransitions() {
+  try {
+    const r = await call('GetSceneTransitionList');
+    trans.current = r.currentSceneTransitionName || '';
+    const kind = k => (r.transitions.find(t => t.transitionKind === k) || {}).transitionName || '';
+    trans.cut = kind('cut_transition');
+    trans.fade = kind('fade_transition');
+  } catch {}
+}
+async function switchScene(name, byItself = false) {
+  const want = byItself && store.get('fade', '1') === '1' ? trans.fade : trans.cut;
+  try {   // if any of this fails, it still switches
+    if (want && want !== trans.current) {
+      await call('SetCurrentSceneTransition', { transitionName: want });
+      trans.current = want;
+    }
+    if (want && want === trans.fade && !trans.durationSet) {
+      trans.durationSet = true;
+      await call('SetCurrentSceneTransitionDuration', { transitionDuration: FADE_MS });
+    }
+  } catch {}
+  return call('SetCurrentProgramScene', { sceneName: name }).catch(showError);
+}
+$('fadeChk').checked = store.get('fade', '1') === '1';
+$('fadeChk').onchange = e => { store.set('fade', e.target.checked ? '1' : '0'); toast(e.target.checked ? 'Shot changes fade' : 'Shot changes cut'); };
 // Picking a shot turns Auto camera off, so it stays on that shot until it's ticked again - on a
 // tablet too: the PC does the following, so the tablet tells it through OBS. Auto media carries on.
 function manualSwitch(name) {
@@ -1145,8 +1302,35 @@ function manualSwitch(name) {
   if (!isMain) call('BroadcastCustomEvent', { eventData: { meetingCameraPick: name } }).catch(() => {});
   switchScene(name);
 }
-function followOffByPick() { setFollow(false, true); }
+function followOffByPick() { setFollow(false, true); toast('Auto camera off — tick it to follow people again'); }
 function toggleCam() { call(state.camOn ? 'StopVirtualCam' : 'StartVirtualCam').catch(showError); }
+// On a wide screen the picture is as big as the window's height allows below the timer and ready
+// bar, so nothing needs scrolling to see it all.
+function fitPicture() {
+  // Measured in screen pixels; Settings → This PC → Size scales the page's own.
+  const zoom = +document.documentElement.style.zoom || 1;
+  const top = document.querySelector('.top').getBoundingClientRect().top + scrollY;
+  const below = (($('camBtn').hidden ? 0 : 76) + 56) * zoom;   // the camera button, the panel's padding, the page's margin
+  const h = Math.max(270 * zoom, innerHeight - top - below);
+  document.documentElement.style.setProperty('--picW', Math.round(h * 16 / 9 / zoom) + 'px');
+}
+addEventListener('resize', fitPicture);
+new ResizeObserver(fitPicture).observe(document.querySelector('main'));
+
+// A short note at the bottom that something happened, gone after a couple of seconds.
+let toastTimer = null;
+function toast(text) {
+  const t = $('toast');
+  t.textContent = text;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+// The name the screen uses for a scene: its shot's short name, or the scene's own.
+function shotName(sceneName) {
+  const { bySlot } = layout(), k = Object.keys(bySlot).find(k => bySlot[k] === sceneName);
+  return k ? SLOTS[k].short || SLOTS[k].title : sceneName;
+}
 // A banner under the header: errors disappear after a while, notes stay until fixed.
 let msgTimer = null;
 function showMsg(text, sticky = false) {
@@ -1286,11 +1470,24 @@ const startsIn = () => {
 const idleText = () => startsIn() ? fmtTimer(startsIn()) : clockNow();
 const idleLabel = cued => startsIn() ? 'Meeting starts in' + (cued ? ` · then ${cued.title}` : '') : cuedText(cued);
 
+// While a part is on: what comes after it, and the study shot if it takes one.
+function upNextText() {
+  if (!timer || !timer.length) return '';
+  const parts = inApp ? timerParts : timer.parts || [];
+  const i = parts.findIndex(p => p.title === timer.label);
+  if (i < 0) return '';
+  const next = parts[i + 1];
+  if (!next) return 'Last part';
+  const shot = isStudy(next.title) && layout().bySlot.spkrdr ? ' · Speaker + Reader' : '';
+  return `Next: ${next.title} · ${next.min} min${shot}`;
+}
+
 function renderTimer() {
   if (!timer) return;
   const big = $('timerBig'), loaded = timer.length > 0, left = timerLeft(), cued = cuedPart();
   big.textContent = loaded ? fmtTimer(left) : idleText();
   $('timerLabel').textContent = loaded ? timer.label : idleLabel(cued);
+  $('timerNext').textContent = upNextText();
   big.className = 'timerBig' + (!loaded ? '' : left < 0 ? ' over' : left <= 60000 ? ' warn' : ' ok') + (loaded && !timer.running ? ' paused' : '');
   const go = $('timerStart');
   go.disabled = !loaded && !cued;
@@ -1305,6 +1502,7 @@ function renderTimer() {
   });
   const more = document.querySelector('#timerParts .more');
   if (more) more.textContent = partsOpen ? 'Fewer' : `All ${partBtns.length} parts`;
+  $('jwBackBtn').hidden = !timer.jwOff;
   const sw = $('timerScreenBtn');
   sw.classList.toggle('on', timer.shown);
   sw.setAttribute('aria-checked', timer.shown);
@@ -1313,7 +1511,7 @@ function renderTimer() {
 const timerDo = q => appFetch('/timer/set?' + new URLSearchParams(q))
   .then(t => { timer = t; timerOffset = t.now - Date.now(); renderTimer(); }).catch(showError);
 
-// The next meeting's parts: the midweek one's from that week's workbook on wol.jw.org (the app
+// This week's meeting parts: the midweek one's from this week's workbook on wol.jw.org (the app
 // fetches it once and keeps it, so it works offline at the hall); the weekend one's never change.
 let timerParts = [], timerPartsNote = '';
 const WEEKEND_PARTS = [{ title: 'Public Talk', min: 30 }, { title: 'Watchtower Study', min: 60 }];
@@ -1328,7 +1526,9 @@ let partsFor = '';
 async function loadTimerParts() {
   const m = nextMeeting();
   if (!m) return;
-  const [y, w] = isoWeek(m.at), key = m.kind + y + '-' + w;
+  // This week's, as JW Library's Meetings page shows it (Monday to Sunday) - even once this week's
+  // meeting is over, rather than next week's.
+  const [y, w] = isoWeek(new Date()), key = m.kind + y + '-' + w;
   if (key === partsFor) return;
   let note = '';
   if (m.kind === 'Weekend') { timerParts = WEEKEND_PARTS; note = 'Weekend meeting'; }
@@ -1391,7 +1591,7 @@ function watchStudy() {
   const now = studyRunning(), scene = layout().bySlot.spkrdr;
   if (now && !wasStudy && scene) {
     if (auto.autoScene) auto.returnScene = scene;   // media on screen: back to the study shot after it
-    else if (state.current !== scene) switchScene(scene);
+    else if (state.current !== scene) switchScene(scene, true);
   }
   wasStudy = now;
 }
@@ -1431,7 +1631,55 @@ if (inApp) {
   $('timerReset').onclick = () => timerAct({ action: 'reset' });
   $('timerScreenBtn').onclick = async () => {
     const t = await appFetch('/timer/show?screen=' + (timer && timer.shown ? '' : 'auto')).catch(showError);
-    if (t) { timer = t; renderTimer(); if (!t.shown) { showMsg('No spare screen for the timer — pick one under Settings → Timer.'); openSettings('timer'); } }
+    if (t) { timer = t; renderTimer(); if (!t.shown) { showMsg('No spare screen for the timer — pick one under Settings → Meeting.'); openSettings('timer'); } }
+  };
+  // Meeting AV on the left half of its screen, JW Library above Zoom on the right.
+  $('arrangeBtn').hidden = false;
+  $('arrangeBtn').onclick = async () => {
+    const r = await appFetch('/windows/arrange').catch(() => null);
+    if (!r) return;
+    toast(r.jw && r.zoom ? 'Windows arranged' : r.jw ? 'Arranged — Zoom isn’t open' : r.zoom ? 'Arranged — JW Library isn’t open'
+                                              : 'JW Library and Zoom aren’t open');
+  };
+  // Straight to this week's meeting media, or the playlists, in JW Library. Both buttons wait while
+  // one is under way, so clicking again doesn't send JW Library back and forth.
+  const jwGo = async (path, going, done) => {
+    const btns = [$('jwMediaBtn'), $('jwPlaylistsBtn')];
+    if (btns[0].disabled) return;
+    btns.forEach(b => { b.disabled = true; });
+    toast(going);
+    const r = await appFetch(path).catch(() => null);
+    btns.forEach(b => { b.disabled = false; });
+    if (!r || !r.busy) toast(r && r.ok ? done : 'JW Library isn’t open');
+  };
+  $('jwMediaBtn').hidden = $('jwPlaylistsBtn').hidden = $('tvPick').hidden = false;
+  // The hall's TV: JW Library's screen, or Zoom's second window that sits under it. Pick one;
+  // the one showing is filled in.
+  const tvBtns = [...document.querySelectorAll('#tvPick button')];
+  let tvGoing = '';
+  const showTv = tv => tvBtns.forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.tv === tv);
+    b.classList.toggle('going', b.dataset.tv === tvGoing);
+  });
+  tvBtns.forEach(b => b.onclick = async () => {
+    const want = b.dataset.tv;
+    if (tvGoing || b.getAttribute('aria-pressed') === 'true') return;
+    tvGoing = want;
+    showTv(timer && timer.tv);
+    toast(want === 'zoom' ? 'Putting Zoom on the hall TV…' : 'Putting JW Library on the hall TV…');
+    const r = await appFetch('/tv?show=' + want).catch(() => null);
+    tvGoing = '';
+    if (r && r.tv) { if (timer) timer.tv = r.tv; }
+    showTv(r && r.tv || (timer && timer.tv));
+    if (r && !r.busy) toast(r.ok ? (r.tv === 'zoom' ? 'Hall TV: Zoom' : 'Hall TV: JW Library')
+                                 : want === 'zoom' ? 'Zoom has no window on the hall TV — turn on dual monitors in Zoom' : 'Couldn’t switch the hall TV');
+  });
+  everyMs(1000, () => { if (timer && !tvGoing) showTv(timer.tv); });
+  $('jwMediaBtn').onclick = () => jwGo('/jw/meetings', 'Opening the meeting media in JW Library…', 'JW Library: meeting media');
+  $('jwPlaylistsBtn').onclick = () => jwGo('/jw/playlists', 'Opening the playlists in JW Library…', 'JW Library: playlists');
+  $('jwBackBtn').onclick = () => {
+    appFetch('/jw/screen-back').catch(showError);
+    toast('JW Library gets the TV back');
   };
   $('timerScreen').onchange = async e => {
     const t = await appFetch('/timer/show?screen=' + encodeURIComponent(e.target.value)).catch(showError);
@@ -1457,7 +1705,7 @@ if (inApp) {
   $('jwCountdown').checked = store.get('jwCountdown', '1') === '1';
   $('jwCountdown').onchange = e => { store.set('jwCountdown', e.target.checked ? '1' : '0'); tellMeeting(); };
   setTimeout(tellMeeting);
-  everyMs(30000, tellMeeting);
+  everyMs(5000, tellMeeting);   // soon after the meeting times are changed, too
 }
 
 // ---- The Timer page of the grid view (a tablet's, or the PC's own) ----
@@ -1486,6 +1734,7 @@ function renderTimerPage() {
   big.textContent = loaded ? fmtTimer(left) : idleText();
   big.className = 'tBig' + (!loaded ? '' : left < 0 ? ' over' : left <= 60000 ? ' warn' : ' ok') + (loaded && !timer.running ? ' paused' : '');
   $('tLabel').textContent = loaded ? timer.label : idleLabel(cued) || 'Pick a part';
+  $('tNext').textContent = upNextText();
   const go = $('tStart');
   go.disabled = !loaded && !cued;
   go.classList.toggle('running', timer.running);
@@ -1549,7 +1798,7 @@ function setSimple(on) {
 $('viewBtn').onclick = () => setSimple(!simple);
 
 // ---------------------------------------------------------------------------
-// The app: starting with Windows, and updates from GitHub (Settings → App, and a button at the top
+// The app: starting with Windows, and updates from GitHub (Settings → This PC, and a button at the top
 // once a new version is downloaded).
 // ---------------------------------------------------------------------------
 function renderApp(a) {
@@ -1570,6 +1819,45 @@ if (inApp) {
   app('');
   everyMs(30000, () => app(''));
 }
+
+// Settings to a file and back, to move to another PC. Leaves out what belongs to this PC: how it
+// reaches OBS, and the camera's reference picture.
+const NOT_MOVED = ['host', 'port', 'password', 'guided', 'idleRef', 'idleRefSrc', 'gridMode', 'pushTimes', 'theme', 'size'];
+$('saveSettings').onclick = () => {
+  const settings = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k.startsWith('obsremote.') && !NOT_MOVED.includes(k.slice(10))) settings[k.slice(10)] = localStorage.getItem(k);
+    }
+  } catch {}
+  const blob = new Blob([JSON.stringify({ meetingAV: 1, saved: new Date().toISOString(), settings }, null, 2)],
+                        { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'Meeting AV settings.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  $('settingsInfo').textContent = 'Saved “Meeting AV settings.json” to Downloads. Copy it to the other PC and load it there.';
+  toast('Settings saved to Downloads');
+};
+$('loadSettings').onclick = () => $('settingsFile').click();
+$('settingsFile').onchange = async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch {}
+  if (!data || !data.meetingAV || typeof data.settings !== 'object') {
+    $('settingsInfo').textContent = 'That isn’t a Meeting AV settings file.';
+    return;
+  }
+  if (!confirm('Replace this PC’s Meeting AV settings with the ones in the file?')) return;
+  for (const [k, v] of Object.entries(data.settings)) if (!NOT_MOVED.includes(k)) store.set(k, String(v));
+  store.set('guided', '1');
+  store.set('pushTimes', '1');   // the file's meeting times win over the ones kept in OBS
+  location.reload();
+};
 
 // ---------------------------------------------------------------------------
 // Grid view: just the shots, big - for a tablet on a stand, or the PC. Each device remembers it;
@@ -1821,7 +2109,7 @@ function setDetected(next) {
   // From any shot, the holding screen included: it comes back once the media has finished.
   if (next === 'idle') {
     // Only go back if the operator didn't pick a different shot in the meantime.
-    if (auto.autoScene && state.current === auto.autoScene && auto.returnScene) switchScene(auto.returnScene);
+    if (auto.autoScene && state.current === auto.autoScene && auto.returnScene) switchScene(auto.returnScene, true);
     auto.autoScene = auto.returnScene = null;
     return;
   }
@@ -1830,7 +2118,7 @@ function setDetected(next) {
   if (!auto.autoScene) auto.returnScene = state.current;   // first media item: remember where we were
   else if (state.current !== auto.autoScene) return;       // operator took over manually; leave it alone
   auto.autoScene = target;
-  if (state.current !== target) switchScene(target);
+  if (state.current !== target) switchScene(target, true);
 }
 
 function renderDetect() {
@@ -2079,7 +2367,7 @@ function decideTrack() {
   const target = layout().bySlot[want];
   if (!target || target === state.current) return;
   track.lastSwitchAt = Date.now();
-  switchScene(target);
+  switchScene(target, true);
 }
 
 function trackPausedBy() {
@@ -2135,7 +2423,7 @@ function renderTrack() {
   const paused = trackPausedBy();
   const n = track.people.filter(zoneOf).length;
   let view;
-  if (!track.src) view = ['help', 'Not set up', 'Pick the platform camera under Settings → Follow people.'];
+  if (!track.src) view = ['help', 'Not set up', 'Pick the platform camera under Settings → Shots.'];
   else if (!track.on) view = ['pause', 'Off', track.offByPick ? 'Turned off when a shot was picked (here or on a tablet) — turn on to follow again'
                                                          : 'Turn on to switch shots by where people are'];
   else if (track.error) view = ['help', 'Detector problem', track.error];
@@ -2187,8 +2475,8 @@ function setMedia(on) {
   renderDetect();
   renderTrack();
 }
-$('trackChk').onchange = () => setFollow($('trackChk').checked);
-$('mediaChk').onchange = () => setMedia($('mediaChk').checked);
+$('trackChk').onchange = () => { setFollow($('trackChk').checked); toast($('trackChk').checked ? 'Auto camera on' : 'Auto camera off — you pick the shots'); };
+$('mediaChk').onchange = () => { setMedia($('mediaChk').checked); toast($('mediaChk').checked ? 'Auto media on' : 'Auto media off'); };
 ['splitA', 'splitB', 'floor', 'readerLine'].forEach(id => {
   const el = $(id);
   el.value = track[id];
@@ -2246,9 +2534,10 @@ const sched = {
 };
 
 // The next meeting, or the one in progress (until 2 hours after it started).
+// The meeting the week is on: Saturday and Sunday the weekend one, Monday to Friday the midweek one.
 function nextMeeting(now = new Date()) {
-  const found = [];
-  for (const [kind, day, time] of [['Midweek', sched.midDay, sched.midTime], ['Weekend', sched.weDay, sched.weTime]]) {
+  const found = [], weekend = [6, 0].includes(now.getDay());
+  for (const [kind, day, time] of weekend ? [['Weekend', sched.weDay, sched.weTime]] : [['Midweek', sched.midDay, sched.midTime]]) {
     const [h, m] = time.split(':').map(Number);
     for (let add = -1; add <= 7; add++) {
       const d = new Date(now);
@@ -2302,7 +2591,7 @@ everyMs(1000, () => {
     sched.startedFor = +m.at;
     if (!state.camOn) call('StartVirtualCam').catch(showError);
     const target = bySlot.speaker || bySlot.wide;
-    if (target) switchScene(target);
+    if (target) switchScene(target, true);
   }
 });
 
@@ -2365,7 +2654,7 @@ $('autoStartChk').onchange = () => {
     sel.appendChild(o);
   }
   sel.value = sched[id];
-  sel.onchange = () => { sched[id] = +sel.value; store.set(id, sel.value); renderMeeting(); shareTimes(); };
+  sel.onchange = () => { sched[id] = +sel.value; store.set(id, sel.value); renderMeeting(); shareTimes(); toast('Meeting times saved'); };
 });
 ['midTime', 'weTime', 'holdText'].forEach(id => {
   const el = $(id);
@@ -2375,6 +2664,7 @@ $('autoStartChk').onchange = () => {
     sched[id] = el.value; store.set(id, el.value); sched.lastText = null;
     renderMeeting();
     shareTimes();
+    toast(id === 'holdText' ? 'Countdown text saved' : 'Meeting times saved');
   };
 });
 
@@ -2403,6 +2693,7 @@ function applyTimes(t) {
 
 // Nothing in OBS yet: the main PC's times become everyone's.
 async function loadTimes() {
+  if (isMain && store.get('pushTimes', '') === '1') { store.set('pushTimes', ''); shareTimes(); return; }
   const { slotValue } = await call('GetPersistentData', TIMES_SLOT);
   if (slotValue) applyTimes(slotValue);
   else if (isMain) shareTimes();
@@ -2483,22 +2774,26 @@ async function collectChecks() {
             ['Use JW Library’s screen', () => call('SetInputSettings', { inputName: input.inputName, inputSettings: { monitor_id: jwItem.itemValue } })]);
       }
     } catch {}
-    try {
-      const g = await toGray(await jwScreen(DET.w, DET.h));
-      if (isDark(g)) add('warn', 'JW Library’s second display is black', 'It normally shows the yeartext.');
-      else add('ok', 'JW Library’s second display is on');
-    } catch { add('bad', 'JW Library’s second display is off', 'Turn it on in JW Library’s Settings.'); }
+    // A capture can fail once in a while (the screen changing mode, JW Library changing page), so it
+    // only counts as off if it fails three times in a row.
+    let g = null;
+    for (let i = 0; i < 3 && !g; i++) {
+      try { g = await toGray(await jwScreen(DET.w, DET.h)); } catch { await new Promise(r => setTimeout(r, 500)); }
+    }
+    if (!g) add('bad', 'Can’t see JW Library’s second display', 'Check Second display is on in JW Library’s Settings.');
+    else if (isDark(g)) add('warn', 'JW Library’s second display is black', 'It normally shows the yeartext.');
+    else add('ok', 'JW Library’s second display is on');
   }
   if (isMain) {
     if (!auto.on) add('warn', 'Auto media is off (JW Library media won’t cut to the screen)', '', ['Turn on', () => { if (!auto.on) toggleAuto(); }]);
-    else if (!auto.mediaSrc) add('bad', 'JW Library auto-switch: no display source picked', 'Settings → JW Library.',
+    else if (!auto.mediaSrc) add('bad', 'JW Library auto-switch: no display source picked', 'Settings → Shots.',
                                  ['Open', () => { $('checkDlg').close(); openSettings('jw'); }]);
     else if (auto.mediaSrc !== JW_SCREEN && !auto.idleRef) add('warn', 'JW Library auto-switch: idle screen not saved',
-                                'With the yeartext showing, Settings → JW Library → Save idle screen.',
+                                'With the yeartext showing, Settings → Shots → Save idle screen.',
                                 ['Open', () => { $('checkDlg').close(); openSettings('jw'); }]);
     else add('ok', 'JW Library auto-switch ready', `Watching “${auto.mediaSrc}”`);
     if (track.on) {
-      if (!track.src) add('bad', 'People tracking: no camera picked', 'Settings → Follow people.');
+      if (!track.src) add('bad', 'People tracking: no camera picked', 'Settings → Shots.');
       else add(track.error ? 'warn' : 'ok', 'People tracking on', track.error || `Watching “${track.src}”`);
     }
   }
@@ -2749,16 +3044,55 @@ async function renderRemoteBox() {
 // ---------------------------------------------------------------------------
 // Settings dialog, with a tab for each part.
 // ---------------------------------------------------------------------------
-let settingsTab = 'connection';
+// A few sections, each listing its parts with a heading and a sentence on what it's for.
+// openSettings takes a section or one part of it, which it scrolls to.
+const SETTINGS = {
+  meeting: [['times', 'Meeting times', 'When the meetings start: for the holding screen’s countdown and auto-start.'],
+            ['timer', 'Timer screen', 'Where the speakers see how long they have left.']],
+  shots:   [['switching', 'Shot changes', 'How the picture goes from one shot to the next.'],
+            ['jw', 'JW Library media', 'Auto media: a picture or video in JW Library cuts to the screen, and back.'],
+            ['track', 'Follow people', 'Auto camera: picks the shot by where people are on the platform.'],
+            ['layers', 'Layers', 'Turn parts of the shot that’s on air on or off.']],
+  links:   [['connection', 'OBS', 'How Meeting AV reaches OBS.'],
+            ['tablet', 'Tablet or phone', 'Run it from a tablet on the hall Wi-Fi.']],
+  pc:      [['look', 'Look', 'Light, dark or dim, and how much fits on the screen. Each PC and tablet keeps its own.'],
+            ['app', 'Meeting AV', 'Starting with Windows, updates, and moving to another PC.']],
+};
+const MAIN_PANES = ['timer', 'switching', 'jw', 'track', 'tablet', 'app'];   // only on the meeting PC
+const paneShown = name => isMain || !MAIN_PANES.includes(name);
+const sectionOf = name => SETTINGS[name] ? name : Object.keys(SETTINGS).find(k => SETTINGS[k].some(p => p[0] === name));
+{
+  const body = $('settingsDlg').querySelector('.dlgBody');
+  for (const parts of Object.values(SETTINGS)) for (const [name, title, text] of parts) {
+    const pane = document.querySelector(`[data-pane="${name}"]`), head = document.createElement('div');
+    head.className = 'paneHead';
+    head.dataset.head = name;
+    head.innerHTML = '<h3></h3><p></p>';
+    head.firstChild.textContent = title;
+    head.lastChild.textContent = text;
+    body.append(head, pane);
+  }
+  if (!isMain) $('pcTab').textContent = 'This tablet';
+}
+let settingsTab = 'links';
 function openSettings(tab = settingsTab) {
-  settingsTab = tab;
-  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab));
-  document.querySelectorAll('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== tab; });
+  const section = sectionOf(tab) || 'links';
+  settingsTab = section;
+  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === section));
+  const names = SETTINGS[section].map(p => p[0]).filter(paneShown);
+  document.querySelectorAll('[data-pane]').forEach(p => { p.hidden = !names.includes(p.dataset.pane); });
+  document.querySelectorAll('.paneHead').forEach(h => {
+    h.hidden = !names.includes(h.dataset.head);
+    h.classList.toggle('first', h.dataset.head === names[0]);
+  });
   if (!$('settingsDlg').open) $('settingsDlg').showModal();
-  if (tab === 'tablet') renderRemoteBox();
-  if (tab === 'timer') renderTimerScreens();
-  if (tab === 'app') appFetch('/app').then(renderApp).catch(() => {});
-  if (tab === 'track') drawTrack();
+  const body = $('settingsDlg').querySelector('.dlgBody');
+  if (tab !== section && names.includes(tab)) document.querySelector(`[data-head="${tab}"]`).scrollIntoView({ block: 'start' });
+  else body.scrollTop = 0;
+  if (names.includes('tablet')) renderRemoteBox();
+  if (names.includes('timer')) renderTimerScreens();
+  if (names.includes('app')) appFetch('/app').then(renderApp).catch(() => {});
+  if (names.includes('track')) drawTrack();
 }
 document.querySelectorAll('#tabs button').forEach(b => { b.onclick = () => openSettings(b.dataset.tab); });
 document.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => openSettings(b.dataset.open); });
@@ -2767,14 +3101,14 @@ document.querySelectorAll('.dlgClose').forEach(b => { b.onclick = () => b.closes
 // ---------------------------------------------------------------------------
 // Setup guide: getting a new PC (or a new operator) going one step at a time. The steps show the
 // same controls as Settings - each Settings tab moves into the guide for its step, and back after.
-// It opens by itself the first time; Settings → App runs it again.
+// It opens by itself the first time; Settings → This PC runs it again.
 // ---------------------------------------------------------------------------
 const SHOT_WORDS = { demo: 'demo', wide: 'wide or platform', table: 'table', reader: 'reader (optional)', speaker: 'speaker',
                      spkmon: 'speaker and monitor', spkrdr: 'speaker and reader (optional, for the studies)',
                      monitor: 'monitor or screen', holding: 'holding, countdown or welcome' };
 const GUIDE = [
   { title: 'Welcome to Meeting AV',
-    text: 'A few quick steps to get this PC ready for meetings. Skip anything you like - Settings → App runs this guide again.' },
+    text: 'A few quick steps to get this PC ready for meetings. Skip anything you like - Settings → This PC runs this guide again.' },
   { title: 'OBS',
     text: 'Meeting AV works the cameras through OBS. Open OBS and Meeting AV connects to it by itself.',
     status: () => connected ? ['ok', 'Connected to OBS'] : ['bad', 'Not connected yet - is OBS open?'] },
@@ -2905,9 +3239,9 @@ addHelp('.timerIco', 'The meeting’s parts are along the bottom. Press Start as
 addHelp('.side:last-child .panelHead h2', 'Click a shot to put it on air, or press its number key. What’s on air is ' +
         'what Zoom sees. The holding screen counts down to the meeting.', true);
 addHelp('#trackTick', 'Auto camera watches the platform and picks the shot: the speaker, the demonstration, the table, ' +
-        'or the whole platform. Picking a shot yourself turns it off; tick it again to let it take over.');
+        'or the whole platform. Picking a shot yourself turns it off; tick it again to let it take over.', true);
 addHelp('#mediaTick', 'Auto media: when JW Library shows a picture, the camera cuts to Speaker + Monitor; a video or ' +
-        'song goes to Monitor. It cuts back when it’s closed.');
+        'song goes to Monitor. It cuts back when it’s closed.', true);
 addHelp('#mixPanel h2', 'Volume for the PC’s speakers, and for Zoom and JW Library on their own. The green line ' +
         'under each shows the sound level.', true);
 
@@ -2982,7 +3316,18 @@ $('camBtn').onclick = toggleCam;
 $('settingsForm').onsubmit = e => { e.preventDefault(); connect(true); };
 
 document.addEventListener('keydown', e => {
-  if (['INPUT', 'SELECT'].includes(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey || !connected) return;
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+  // Space starts the part, and stops it with the next one ready - only while Meeting AV is the window
+  // in front with nothing else open in it, and never as a click on whichever button has the focus.
+  if (e.code === 'Space' && inApp) {
+    e.preventDefault();
+    if (e.repeat || !document.hasFocus() || document.querySelector('dialog[open]') || $('timerStart').disabled) return;
+    const running = timer && timer.running;
+    timerAct({ action: running ? 'stopNext' : 'start' });
+    toast(running ? 'Timer stopped — next part ready' : 'Timer started');
+    return;
+  }
+  if (!connected) return;
   if (e.key === 'v' || e.key === 'V') { toggleCam(); return; }
   if (e.key === 'a' || e.key === 'A') { toggleAuto(); return; }
   const n = parseInt(e.key, 10);

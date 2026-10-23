@@ -117,6 +117,7 @@ static class MeetingAV
         File.WriteAllText(portFile, Port.ToString());
         new Thread(() => Serve(listener)) { IsBackground = true }.Start();
         new Thread(WatchJwMedia) { IsBackground = true }.Start();
+        new Thread(WatchJwStart) { IsBackground = true }.Start();
 
         Application.EnableVisualStyles();
         UiThread = new Control();
@@ -157,6 +158,7 @@ static class MeetingAV
 
     static void Quit()
     {
+        if (JwDisplayOff && !JwBusy && JwSetSecondDisplay(true)) { try { File.Delete(JwOffFile); } catch { } }
         Tray.Visible = false;
         Application.Exit();
         Environment.Exit(0);
@@ -432,7 +434,8 @@ static class MeetingAV
             return "{\"running\":" + (TimerRunning ? "true" : "false") + ",\"endsAt\":" + TimerEndsAt +
                    ",\"left\":" + TimerLeft + ",\"length\":" + TimerLength + ",\"label\":" + Json(TimerLabel) +
                    ",\"now\":" + NowMs() + ",\"shown\":" + (TimerScreen != "" ? "true" : "false") +
-                   ",\"screen\":" + Json(TimerScreen) + ",\"meetingAt\":" + MeetingAt + "}";
+                   ",\"screen\":" + Json(TimerScreen) + ",\"meetingAt\":" + MeetingAt +
+                   ",\"jwOff\":" + (JwDisplayOff ? "true" : "false") + ",\"tv\":\"" + (TvShowsZoom ? "zoom" : "jw") + "\"}";
     }
 
     // set (load a part of secs), start, stop, reset (back to the part's length), add (secs, may be
@@ -689,35 +692,507 @@ static class MeetingAV
     }
 
     // ---- Countdown on JW Library's screen ------------------------------------------------
-    // In the last 5 minutes before a meeting, a countdown covers the screen JW Library shows on (the
-    // hall's TV), so everyone knows when it starts. It steps aside while JW Library shows a picture or
-    // video, and goes at the start time, leaving the yeartext. Settings > Timer can switch it off.
+    // In the last 5 minutes before a meeting, a countdown fills the screen JW Library shows on (the
+    // hall's TV), so everyone knows when it starts. JW Library's own screen covers any other window,
+    // so for the countdown Meeting AV switches JW Library's second display off, and back on as it
+    // reaches 0:00 - leaving JW Library on the meeting's media, ready for the song. The page can
+    // hand the screen back sooner. Settings > Meeting can switch the countdown off.
 
     static bool CountdownOn = true;
+    static long CountdownDismissedFor;   // the meeting whose countdown was handed back early
     static TimerWindow CountdownForm;
     static System.Windows.Forms.Timer CountdownTimer;
+    static volatile bool JwDisplayOff;   // switched off by Meeting AV for the countdown
+    static volatile bool JwBusy;         // switching it, on a background thread
+    static string JwOffFile { get { return Path.Combine(DataDir, "jw-display-off"); } }
 
     static void WatchCountdown()   // every second, on the UI thread
     {
         long left = MeetingAt - NowMs();
-        bool soon = CountdownOn && MeetingAt > 0 && left > 0 && left <= 5 * 60000;
-        if (soon) JwStateAskedAt = DateTime.Now;   // keeps the watch on what JW Library has open
+        bool soon = CountdownOn && MeetingAt > 0 && left > 0 && left <= 5 * 60000 && CountdownDismissedFor != MeetingAt;
         Screen screen = soon ? JwTargetScreen() : null;
-        bool want = screen != null && JwMedia != "image" && JwMedia != "video";
-        if (want && (CountdownForm == null || CountdownForm.IsDisposed))
+        bool want = screen != null;
+        bool shown = CountdownForm != null && !CountdownForm.IsDisposed;
+        // Switching JW Library's screen back on takes a few seconds, so it starts just before 0:00:
+        // the yeartext takes over from the countdown as it ends.
+        if (JwDisplayOff && !JwBusy && (!want || left <= JwBackLeadMs)) GiveJwItsScreenBack();
+        if (JwBusy) return;
+        if (want && !shown && left > JwBackLeadMs)
+        {
+            JwBusy = true;
+            new Thread(() =>
+            {
+                try { if (JwRunning() && JwSetSecondDisplay(false)) { JwDisplayOff = true; Touch(JwOffFile); } }
+                finally
+                {
+                    OnUi(() =>
+                    {
+                        try
+                        {
+                            LoaderReady();
+                            CountdownForm = new TimerWindow(Url + "timer-screen?countdown", Path.Combine(DataDir, "WebView2"), screen, true);
+                            CountdownForm.Show();
+                        }
+                        catch { CountdownForm = null; }
+                        JwBusy = false;
+                    });
+                }
+            }) { IsBackground = true }.Start();
+        }
+        else if (!want && shown)
+        {
+            CountdownForm.Close();
+            CountdownForm = null;
+        }
+    }
+
+    const long JwBackLeadMs = 7000;
+
+    static void GiveJwItsScreenBack()
+    {
+        if (!JwDisplayOff || JwBusy) return;
+        JwBusy = true;
+        new Thread(() =>
+        {
+            try { if (!JwRunning() || JwSetSecondDisplay(true)) { JwDisplayOff = false; TvShowsZoom = false; try { File.Delete(JwOffFile); } catch { } } }
+            finally { JwBusy = false; }
+        }) { IsBackground = true }.Start();
+    }
+
+    static void Touch(string file) { try { File.WriteAllText(file, DateTime.Now.ToString("s")); } catch { } }
+    static void OnUi(Action a) { try { UiThread.BeginInvoke(a); } catch { } }
+    static bool JwRunning() { return Process.GetProcessesByName("JWLibrary").Length > 0; }
+
+    // ---- Driving JW Library: its Meetings page and its second display -----------------------
+    // Through Windows UI Automation, like a screen reader - no mouse or keyboard. Names in English
+    // and French, with the menu's order as a fallback for other languages.
+
+    static readonly Regex JwHomeName = new Regex("^(Home|Accueil|Inicio|In\u00edcio|Startseite|Home page)$", RegexOptions.IgnoreCase);
+    static readonly Regex JwMeetingsName = new Regex("^(Meetings|R\u00e9unions|Reuniones|Reuni\u00f5es|Zusammenk\u00fcnfte|Riunioni|Vergaderingen)$", RegexOptions.IgnoreCase);
+    static readonly Regex JwSettingsName = new Regex("^(Settings|Param\u00e8tres|Configuraci\u00f3n|Ajustes|Configura\u00e7\u00f5es|Einstellungen|Impostazioni|Instellingen)$", RegexOptions.IgnoreCase);
+    static readonly Regex JwSecondName = new Regex("second|deuxi\u00e8me|segund|zweit|tweede", RegexOptions.IgnoreCase);
+    static readonly Regex JwMediaName = new Regex(@"\bm[e\u00e9]di(a|as|en|os)\b", RegexOptions.IgnoreCase);
+
+    static AutomationElement JwMainWindow()
+    {
+        var menu = new PropertyCondition(AutomationElement.AutomationIdProperty, "HamburgerRadioButton");
+        foreach (AutomationElement w in AutomationElement.RootElement.FindAll(TreeScope.Children,
+                     new PropertyCondition(AutomationElement.NameProperty, "JW Library")))
+            if (w.FindFirst(TreeScope.Descendants, menu) != null) return w;
+        return null;
+    }
+
+    // Pressing something that opens another page can report an error as the old page goes away,
+    // although it worked: that's not counted as a failure.
+    static void Press(AutomationElement el)
+    {
+        try { PressOrThrow(el); } catch (ElementNotAvailableException) { }
+    }
+
+    static void PressOrThrow(AutomationElement el)
+    {
+        object p;
+        if (el.TryGetCurrentPattern(InvokePattern.Pattern, out p)) ((InvokePattern)p).Invoke();
+        else if (el.TryGetCurrentPattern(SelectionItemPattern.Pattern, out p)) ((SelectionItemPattern)p).Select();
+        else if (el.TryGetCurrentPattern(TogglePattern.Pattern, out p)) ((TogglePattern)p).Toggle();
+    }
+
+    // An item of JW Library's side menu: by name, or by its place in the menu. In a narrow window the
+    // menu is folded away behind its button, which opens it.
+    static readonly string[] JwSections = { "navigation_home", "navigation_bible", "navigation_library", "navigation_meetings", "navigation_personal_study" };
+
+    // Which section of JW Library is open (its place in the menu), or -1 if the menu can't be seen.
+    static int JwCurrentSection(AutomationElement w)
+    {
+        for (int i = 0; i < JwSections.Length; i++)
+        {
+            AutomationElement g = w.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, JwSections[i]));
+            AutomationElement item = g == null ? null : TreeWalker.ControlViewWalker.GetParent(g);
+            object p;
+            if (item != null && item.TryGetCurrentPattern(SelectionItemPattern.Pattern, out p) && ((SelectionItemPattern)p).Current.IsSelected) return i;
+        }
+        return -1;
+    }
+
+    static AutomationElement JwMenuItem(AutomationElement w, Regex name, int index)
+    {
+        var listItem = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem);
+        string id = index >= 0 && index < JwSections.Length ? JwSections[index] : null;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            // Each item has a fixed name inside, the same in every language.
+            AutomationElement fixedId = id == null ? null : w.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, id));
+            if (fixedId != null)
+            {
+                AutomationElement item = TreeWalker.ControlViewWalker.GetParent(fixedId);
+                if (item != null && item.Current.ControlType == ControlType.ListItem) return item;
+            }
+            AutomationElementCollection items = w.FindAll(TreeScope.Descendants, listItem);
+            foreach (AutomationElement it in items)
+                if (name.IsMatch(it.Current.Name)) return it;
+            if (pass == 1) return items.Count > index ? items[index] : null;
+            AutomationElement ham = w.FindFirst(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.AutomationIdProperty, "HamburgerRadioButton"));
+            if (ham == null) return null;
+            Press(ham);
+            Thread.Sleep(800);
+        }
+        return null;
+    }
+
+    // JW Library's Meetings page, then this week's meeting - Saturday and Sunday the Watchtower Study,
+    // Monday to Friday the midweek meeting - and its media, ready to show.
+    static bool JwOpenMeetings()
+    {
+        lock (JwLock)
         {
             try
             {
-                LoaderReady();
-                CountdownForm = new TimerWindow(Url + "timer-screen?countdown", Path.Combine(DataDir, "WebView2"), screen, true);
-                CountdownForm.Show();
+                AutomationElement w = JwMainWindow();
+                if (w == null) return false;
+                IntPtr h = new IntPtr(w.Current.NativeWindowHandle);
+                if (IsIconic(h)) { ShowWindow(h, 9); Thread.Sleep(800); }   // minimised: brought back
+                AutomationElement item = JwMenuItem(w, JwMeetingsName, 3);
+                if (item == null) return false;
+                Press(item);
+                JwMain = null;   // its page changed: looked up afresh
+                JwOpenMeetingMedia(w);
+                return true;
             }
-            catch { CountdownForm = null; }
+            catch { return false; }
         }
-        else if (!want && CountdownForm != null)
+    }
+
+    static void JwOpenMeetingMedia(AutomationElement w)
+    {
+        DayOfWeek d = DateTime.Now.DayOfWeek;
+        bool weekend = d == DayOfWeek.Saturday || d == DayOfWeek.Sunday;
+        string header = weekend ? "WatchtowerHeader" : "MidweekMeetingHeader";
+        AutomationElement card = null;
+        for (int i = 0; i < 20 && card == null; i++)
         {
-            if (!CountdownForm.IsDisposed) CountdownForm.Close();
-            CountdownForm = null;
+            Thread.Sleep(250);
+            AutomationElement head = w.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, header));
+            if (head == null) continue;
+            AutomationElement section = TreeWalker.ControlViewWalker.GetParent(head);
+            if (section != null) card = section.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "MeetingDocumentCard"));
+        }
+        if (card == null) return;
+        // A card only opens with Enter, so JW Library is brought in front for it - and the key is sent
+        // only if it really is in front, never into another program - then the focus goes back.
+        IntPtr jw = new IntPtr(w.Current.NativeWindowHandle), was = GetForegroundWindow();
+        card.SetFocus();
+        Thread.Sleep(300);
+        if (GetForegroundWindow() != jw) { AllowForeground(); SetForegroundWindow(jw); Thread.Sleep(300); card.SetFocus(); Thread.Sleep(200); }
+        if (GetForegroundWindow() != jw) return;
+        SendKeys.SendWait("{ENTER}");
+        // The article: in a narrow window its study notes open over it first.
+        AutomationElement media = null;
+        for (int i = 0; i < 24 && media == null; i++)
+        {
+            Thread.Sleep(250);
+            AutomationElement pane = w.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "StudyPaneButton"));
+            object tp;
+            if (pane != null && i == 4 && pane.TryGetCurrentPattern(TogglePattern.Pattern, out tp) && ((TogglePattern)tp).Current.ToggleState == ToggleState.On)
+                ((TogglePattern)tp).Toggle();
+            media = JwFindMediaButton(w);
+            if (media == null && i >= 4 && i % 4 == 0)   // under "..."
+                foreach (AutomationElement more in w.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "MoreButton")))
+                    if (!more.Current.IsOffscreen) { Press(more); break; }
+        }
+        if (media != null) Press(media);
+        if (was != IntPtr.Zero && was != jw) { Thread.Sleep(500); SetForegroundWindow(was); }
+    }
+
+    // Personal Study > Playlists.
+    static readonly Regex JwPlaylistsName = new Regex("^(Playlists|Listes de lecture|Listas de reproducci\u00f3n|Wiedergabelisten|Playlist)", RegexOptions.IgnoreCase);
+    static Rectangle JwWindowWas;   // JW Library's window before its second display was switched
+    static bool JwWasZoomed;
+    static int JwNavigating;   // 1 while a button's trip through JW Library is under way
+    static bool JwOpenPlaylists()
+    {
+        lock (JwLock)
+        {
+            try
+            {
+                AutomationElement w = JwMainWindow();
+                if (w == null) return false;
+                IntPtr h = new IntPtr(w.Current.NativeWindowHandle);
+                if (IsIconic(h)) { ShowWindow(h, 9); Thread.Sleep(800); }
+                if (w.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "SearchBar")) != null &&
+                    JwFindNamed(w, JwPlaylistsName) != null) return true;   // already there
+                AutomationElement study = JwMenuItem(w, new Regex("^(Personal Study|\u00c9tude individuelle)$", RegexOptions.IgnoreCase), 4);
+                if (study == null) return false;
+                Press(study);
+                JwMain = null;
+                // Personal Study opens on the page it was last on: its overview with a Playlists heading
+                // to press, or the playlists already (they have a search bar).
+                for (int i = 0; i < 20; i++)
+                {
+                    Thread.Sleep(250);
+                    if (i >= 2 && w.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "SearchBar")) != null)
+                        return true;
+                    foreach (AutomationElement b in w.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+                        if (JwPlaylistsName.IsMatch(b.Current.Name)) { Press(b); return true; }
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+    }
+
+    static AutomationElement JwFindMediaButton(AutomationElement w)
+    {
+        foreach (AutomationElement b in w.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+            if (JwMediaName.IsMatch(b.Current.Name) && !b.Current.IsOffscreen) return b;
+        return null;
+    }
+
+    // Lets this program bring another window to the front (Windows allows it after a key event).
+    static void AllowForeground() { keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero); }
+
+    // JW Library's Settings > Second display, switched on or off. That's done as soon as the switch
+    // flips (the TV changes then); tidying up follows in the background: Settings closed, JW
+    // Library's window put back where it was, and JW Library left on the meeting's media (for the
+    // countdown) or back on the page it was on (for the TV switch).
+    static bool JwSetSecondDisplay(bool on, bool thenMeetingMedia = true)
+    {
+        AutomationElement w;
+        IntPtr jwh;
+        bool done;
+        int section = -1;
+        lock (JwLock)
+        {
+            try
+            {
+                w = JwMainWindow();
+                if (w == null) return false;
+                jwh = new IntPtr(w.Current.NativeWindowHandle);
+                if (IsIconic(jwh)) ShowWindow(jwh, 4);   // restored, not activated
+                // JW Library puts its window back to a small default when its second display is
+                // switched, so where it was (before the countdown switched it off) is put back after.
+                RECT was;
+                if (!on || JwWindowWas.IsEmpty)
+                    if (GetWindowRect(jwh, out was)) { JwWindowWas = Rectangle.FromLTRB(was.Left, was.Top, was.Right, was.Bottom); JwWasZoomed = IsZoomed(jwh); }
+                section = JwCurrentSection(w);   // to go back to afterwards
+                AutomationElement home = JwMenuItem(w, JwHomeName, 0);
+                if (home == null) return false;
+                Press(home);
+                var button = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button);
+                Func<AutomationElement> findSettings = () =>
+                {
+                    foreach (AutomationElement b in w.FindAll(TreeScope.Descendants, button))
+                        if (JwSettingsName.IsMatch(b.Current.Name) && !b.Current.IsOffscreen) return b;
+                    return null;
+                };
+                AutomationElement settings = WaitFor(findSettings, 2500);
+                if (settings == null)   // a narrow window keeps it under "..."
+                {
+                    foreach (AutomationElement more in w.FindAll(TreeScope.Descendants,
+                                 new PropertyCondition(AutomationElement.AutomationIdProperty, "MoreButton")))
+                        if (!more.Current.IsOffscreen) { Press(more); break; }
+                    settings = WaitFor(findSettings, 1500);
+                }
+                if (settings == null) return false;
+                Press(settings);
+                var toggles = new PropertyCondition(AutomationElement.IsTogglePatternAvailableProperty, true);
+                DateTime nameless = DateTime.Now.AddMilliseconds(1200);
+                AutomationElement toggle = WaitFor(() =>
+                {
+                    AutomationElement first = null;
+                    foreach (AutomationElement t in w.FindAll(TreeScope.Descendants, toggles))
+                    {
+                        if (t.Current.AutomationId == "HamburgerRadioButton") continue;
+                        if (first == null) first = t;
+                        if (JwSecondName.IsMatch(t.Current.Name)) return t;
+                    }
+                    return DateTime.Now > nameless ? first : null;   // its name in another language
+                }, 4000);
+                if (toggle == null) return false;
+                var tp = (TogglePattern)toggle.GetCurrentPattern(TogglePattern.Pattern);
+                if ((tp.Current.ToggleState == ToggleState.On) != on) tp.Toggle();
+                Thread.Sleep(150);
+                done = (tp.Current.ToggleState == ToggleState.On) == on;
+            }
+            catch { return false; }
+        }
+        new Thread(() => JwTidyUp(w, jwh, on, thenMeetingMedia, section)) { IsBackground = true }.Start();
+        return done;
+    }
+
+    static void JwTidyUp(AutomationElement w, IntPtr jwh, bool on, bool thenMeetingMedia, int section)
+    {
+        lock (JwLock)
+        {
+            try
+            {
+                // Settings is a dialog with a Close button in a narrow window, a page with Back in a wide one.
+                AutomationElement close = w.FindFirst(TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.AutomationIdProperty, "CloseButton"));
+                bool dialog = close != null;
+                if (close == null) close = w.FindFirst(TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.AutomationIdProperty, "Back"));
+                if (close != null) { Press(close); Thread.Sleep(400); }
+                if (thenMeetingMedia)
+                {
+                    AutomationElement meetings = JwMenuItem(w, JwMeetingsName, 3);
+                    if (meetings != null) { Press(meetings); JwOpenMeetingMedia(w); }
+                }
+                else if (section > 0)
+                {
+                    // The section it was in, which opens on the page it was last on there.
+                    AutomationElement item = JwMenuItem(w, new Regex("^$"), section);
+                    if (item != null) Press(item);
+                }
+                JwMain = null;
+                Thread.Sleep(300);
+                if (!JwWindowWas.IsEmpty)
+                {
+                    if (JwWasZoomed) ShowWindow(jwh, 3);   // maximised again
+                    else SetWindowPos(jwh, IntPtr.Zero, JwWindowWas.X, JwWindowWas.Y, JwWindowWas.Width, JwWindowWas.Height, 0x0004 | 0x0010);
+                    if (on) JwWindowWas = Rectangle.Empty;
+                }
+            }
+            catch { }
+        }
+    }
+
+    // Looks again every tenth of a second until it's there, or the time is up.
+    static AutomationElement WaitFor(Func<AutomationElement> find, int ms)
+    {
+        DateTime until = DateTime.Now.AddMilliseconds(ms);
+        while (true)
+        {
+            AutomationElement e = null;
+            try { e = find(); } catch (ElementNotAvailableException) { }
+            if (e != null || DateTime.Now > until) return e;
+            Thread.Sleep(100);
+        }
+    }
+
+    static AutomationElement JwFindNamed(AutomationElement w, Regex name)
+    {
+        foreach (AutomationElement e in w.FindAll(TreeScope.Descendants, Condition.TrueCondition))
+            if (name.IsMatch(e.Current.Name) && !e.Current.IsOffscreen) return e;
+        return null;
+    }
+
+    // ---- The hall's TV: JW Library, or Zoom's second window --------------------------------------
+    // Zoom in "dual monitors" mode keeps its second window (the gallery) on the screen JW Library
+    // uses, under JW Library's own. Showing Zoom there switches JW Library's second display off and
+    // brings that window up (never made active, which JW Library reacts to); showing JW Library
+    // switches its display back on.
+
+    static volatile bool TvShowsZoom;
+
+    static bool ShowOnTv(bool zoom)
+    {
+        Screen tv = JwTargetScreen();
+        if (zoom)
+        {
+            IntPtr z = tv == null ? IntPtr.Zero : FindTopWindow("ConfMultiTabContentWndClass", tv);
+            if (z == IntPtr.Zero) return false;   // no Zoom window on that screen
+            if (JwRunning() && !JwSetSecondDisplay(false, false)) return false;
+            SetWindowPos(z, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);   // to the front, not active
+            TvShowsZoom = true;
+            return true;
+        }
+        if (JwRunning() && !JwSetSecondDisplay(true, false)) return false;
+        TvShowsZoom = false;
+        return true;
+    }
+
+    // ---- Arranging the PC's screen: Meeting AV on the left, JW Library and Zoom on the right ----
+
+    static string ArrangeWindows()
+    {
+        IntPtr me = IntPtr.Zero;
+        try { if (Window != null && !Window.IsDisposed) me = (IntPtr)Window.Invoke((Func<IntPtr>)(() => Window.Handle)); } catch { }
+        Screen screen = me != IntPtr.Zero ? Screen.FromHandle(me) : Screen.PrimaryScreen;
+        Rectangle a = screen.WorkingArea;
+        int half = a.Width / 2;
+        IntPtr jw = IntPtr.Zero;
+        try { lock (JwLock) { AutomationElement w = JwMainWindow(); if (w != null) jw = new IntPtr(w.Current.NativeWindowHandle); } } catch { }
+        // Zoom's meeting window on this screen - in "dual monitors" mode it has a second one on the
+        // hall's TV, which is left alone - or else Zoom's home window.
+        IntPtr zoom = FindTopWindow("ConfMultiTabContentWndClass", screen);
+        if (zoom == IntPtr.Zero) zoom = FindTopWindow("ZPPTMainFrmWndClassEx", screen);
+        var left = new Rectangle(a.X, a.Y, half, a.Height);
+        var rightTop = new Rectangle(a.X + half, a.Y, a.Width - half, a.Height / 2);
+        var rightBottom = new Rectangle(a.X + half, a.Y + a.Height / 2, a.Width - half, a.Height - a.Height / 2);
+        // Meeting AV active first: Windows only lets the active program bring others to the front.
+        AllowForeground();
+        if (me != IntPtr.Zero)
+        {
+            SetForegroundWindow(me);
+            // On its own thread, so the page inside resizes with it.
+            try { Window.Invoke((Action)(() => PlaceWindow(me, left))); } catch { }
+        }
+        // Only one of them: it has the whole right side.
+        if (jw != IntPtr.Zero) PlaceWindow(jw, zoom != IntPtr.Zero ? rightTop : Rectangle.Union(rightTop, rightBottom));
+        if (zoom != IntPtr.Zero) PlaceWindow(zoom, jw != IntPtr.Zero ? rightBottom : Rectangle.Union(rightTop, rightBottom));
+        // In front of anything else on the screen, Meeting AV last so it keeps the keyboard. Zoom is
+        // only brought forward, never made active: that would bring its window on the TV up too, and
+        // JW Library takes its second display away when a window on that screen becomes active.
+        foreach (IntPtr h in new[] { jw, me })
+            if (h != IntPtr.Zero) { SetForegroundWindow(h); Thread.Sleep(80); }
+        return "{\"jw\":" + (jw != IntPtr.Zero ? "true" : "false") + ",\"zoom\":" + (zoom != IntPtr.Zero ? "true" : "false") + "}";
+    }
+
+    static IntPtr FindTopWindow(string className, Screen on)
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, p) =>
+        {
+            var c = new StringBuilder(64);
+            GetClassName(h, c, 64);
+            if (c.ToString() == className && IsWindowVisible(h) &&
+                Screen.FromHandle(h).DeviceName == on.DeviceName) { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    // Puts a window exactly on an area, in front: un-maximised, and allowing for the invisible border
+    // Windows draws around windows, so they meet edge to edge.
+    static void PlaceWindow(IntPtr h, Rectangle r)
+    {
+        if (IsIconic(h) || IsZoomed(h)) ShowWindow(h, 9);
+        SetWindowPos(h, IntPtr.Zero, r.X, r.Y, r.Width, r.Height, 0x0010);   // to the front, without taking the keyboard
+        RECT outer, frame;
+        if (GetWindowRect(h, out outer) && DwmGetWindowAttribute(h, 9, out frame, Marshal.SizeOf(typeof(RECT))) == 0)
+        {
+            int l = frame.Left - outer.Left, t = frame.Top - outer.Top, rr = outer.Right - frame.Right, b = outer.Bottom - frame.Bottom;
+            SetWindowPos(h, IntPtr.Zero, r.X - l, r.Y - t, r.Width + l + rr, r.Height + t + b, 0x0004 | 0x0010);
+        }
+    }
+
+    delegate bool EnumWindowsProc(IntPtr h, IntPtr p);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc cb, IntPtr p);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT value, int size);
+
+    // JW Library opened while Meeting AV is running goes straight to the meeting's media.
+    static void WatchJwStart()
+    {
+        bool wasRunning = JwRunning();
+        // Left switched off by a Meeting AV that stopped mid-countdown: switched back on.
+        if (File.Exists(JwOffFile)) { JwDisplayOff = true; if (!wasRunning) { try { File.Delete(JwOffFile); } catch { } JwDisplayOff = false; } }
+        while (true)
+        {
+            Thread.Sleep(2000);
+            bool running = JwRunning();
+            if (running && !wasRunning)
+            {
+                for (int i = 0; i < 30 && JwMainWindow() == null; i++) Thread.Sleep(1000);
+                Thread.Sleep(3000);   // its first page settles
+                JwOpenMeetings();
+            }
+            if (!running && JwDisplayOff && !JwBusy) { JwDisplayOff = false; try { File.Delete(JwOffFile); } catch { } }
+            wasRunning = running;
         }
     }
 
@@ -1001,6 +1476,10 @@ static class MeetingAV
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
     struct RECT { public int Left, Top, Right, Bottom; }
 
     static readonly object JwLock = new object();
@@ -1018,8 +1497,12 @@ static class MeetingAV
             new PropertyCondition(AutomationElement.NameProperty, "JW Library"));
         var menu = new PropertyCondition(AutomationElement.AutomationIdProperty, "HamburgerRadioButton");
         if (named.Count < 2) return IntPtr.Zero;
+        // The one without the menu - but not a minimised main window, whose menu can't be seen either.
         foreach (AutomationElement w in named)
-            if (w.FindFirst(TreeScope.Descendants, menu) == null) { JwWindow = new IntPtr(w.Current.NativeWindowHandle); break; }
+        {
+            IntPtr h = new IntPtr(w.Current.NativeWindowHandle);
+            if (!IsIconic(h) && w.FindFirst(TreeScope.Descendants, menu) == null) { JwWindow = h; break; }
+        }
         return JwWindow;
     }
 
@@ -1145,14 +1628,15 @@ static class MeetingAV
                 {
                     using (Graphics g = Graphics.FromImage(full))
                     {
-                        if (hwnd == IntPtr.Zero) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
-                        else
+                        bool ok = false;
+                        if (hwnd != IntPtr.Zero)
                         {
                             IntPtr dc = g.GetHdc();
-                            bool ok = PrintWindow(hwnd, dc, 2);   // PW_RENDERFULLCONTENT: includes video and web content
+                            ok = PrintWindow(hwnd, dc, 2);   // PW_RENDERFULLCONTENT: includes video and web content
                             g.ReleaseHdc(dc);
-                            if (!ok) return null;
                         }
+                        // No window to read, or it couldn't be read: what's on its screen.
+                        if (!ok) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
                     }
                     using (Graphics g = Graphics.FromImage(small))
                     {
@@ -1358,6 +1842,41 @@ static class MeetingAV
                 CountdownOn = !query.Contains("countdown=0");
                 SendJson(stream, "{}");
             }
+            else if (path == "/jw/screen-back" && local)   // the countdown hands JW Library its screen back now
+            {
+                CountdownDismissedFor = MeetingAt;
+                UiThread.BeginInvoke((Action)WatchCountdown);
+                SendJson(stream, "{}");
+            }
+            else if ((path == "/jw/meetings" || path == "/jw/playlists") && local)
+            {
+                // One at a time: a second click while JW Library is still being moved is ignored,
+                // rather than queued up to run straight after.
+                if (Interlocked.Exchange(ref JwNavigating, 1) == 1) { SendJson(stream, "{\"ok\":false,\"busy\":true}"); return; }
+                try
+                {
+                    bool ok = path == "/jw/meetings" ? JwOpenMeetings() : JwOpenPlaylists();
+                    SendJson(stream, "{\"ok\":" + (ok ? "true" : "false") + "}");
+                }
+                finally { JwNavigating = 0; }
+            }
+            else if (path == "/tv" && local)   // show=zoom or show=jw
+            {
+                if (Interlocked.Exchange(ref JwNavigating, 1) == 1) { SendJson(stream, "{\"ok\":false,\"busy\":true}"); return; }
+                try
+                {
+                    bool ok = ShowOnTv(query.Contains("show=zoom"));
+                    SendJson(stream, "{\"ok\":" + (ok ? "true" : "false") + ",\"tv\":\"" + (TvShowsZoom ? "zoom" : "jw") + "\"}");
+                }
+                finally { JwNavigating = 0; }
+            }
+            else if (path == "/windows/arrange" && local)
+                SendJson(stream, ArrangeWindows());
+            else if (path == "/jw/second-display" && local)   // on=1 or on=0
+            {
+                bool ok = JwSetSecondDisplay(!query.Contains("on=0"));
+                SendJson(stream, "{\"ok\":" + (ok ? "true" : "false") + "}");
+            }
             else if (path == "/timer/set" && local)
             {
                 Match a = Regex.Match(query, "action=(\\w+)"), n = Regex.Match(query, "secs=(-?\\d+)"), l = Regex.Match(query, "label=([^&]*)");
@@ -1444,7 +1963,21 @@ class TimerWindow : Form
         ShowInTaskbar = false;
         BackColor = Color.Black;
         StartPosition = FormStartPosition.Manual;
-        Bounds = screen.Bounds;
+        want = screen.Bounds;
+        Bounds = want;
+        // Windows resizes a window that lands on a screen with a different scaling (125%, 150%…), which
+        // pushed it partly off its screen: it's put back on exactly the screen's own pixels.
+        Shown += (s, e) => Place();
+        DpiChanged += (s, e) => { e.Cancel = true; BeginInvoke((Action)Place); };
+        if (onTop)
+        {
+            // Kept on top while it's up - without ever taking the focus: making another window active on
+            // JW Library's screen makes JW Library take its second display away.
+            var keepOnTop = new System.Windows.Forms.Timer { Interval = 2000 };
+            keepOnTop.Tick += (s, e) => { if (IsHandleCreated) SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); };
+            keepOnTop.Start();
+            FormClosed += (s, e) => keepOnTop.Dispose();
+        }
         view.DefaultBackgroundColor = Color.Black;
         Controls.Add(view);
         Load += async (s, e) =>
@@ -1462,7 +1995,16 @@ class TimerWindow : Form
         };
     }
 
-    public void MoveTo(Screen screen) { Bounds = screen.Bounds; }
+    Rectangle want;
+    public void MoveTo(Screen screen) { want = screen.Bounds; Bounds = want; Place(); }
+
+    void Place()
+    {
+        if (IsHandleCreated) SetWindowPos(Handle, IntPtr.Zero, want.X, want.Y, want.Width, want.Height, 0x0004 | 0x0010);   // no z-order change, no activate
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int w, int h, uint flags);
 
     protected override bool ShowWithoutActivation { get { return true; } }
 }

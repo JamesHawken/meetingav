@@ -18,7 +18,7 @@ param(
 )
 
 # ---- Settings ---------------------------------------------------------------
-$WeekendDays = @('Saturday', 'Sunday')   # days with the weekend meeting; any other day = midweek
+$WeekendDays = @('Saturday', 'Sunday')   # get ready for the weekend meeting; Monday to Friday = midweek
 $ObsExe      = 'C:\Program Files\obs-studio\bin\64bit\obs64.exe'
 $ControlPage = Join-Path $PSScriptRoot 'obs-remote.html'
 $RemoteScript = Join-Path $PSScriptRoot 'Serve-Remote.ps1'

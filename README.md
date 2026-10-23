@@ -21,7 +21,7 @@ video, and run it all from a tablet.
 3. Open JW Library and Zoom yourself.
 4. The first time, a **setup guide** walks through the rest: OBS, the camera
    shots, meeting times, JW Library, the timer screen, following people and the
-   tablet. Settings → App runs it again.
+   tablet. Settings → This PC runs it again.
 
 From half an hour before each meeting, a bar at the top says **Ready** - or
 what to sort out, with a button to fix it where Meeting AV can. Tap **?** next
@@ -30,7 +30,7 @@ to anything for a quick explanation.
 Meeting AV opens on the holding screen, with a countdown to the meeting. It
 starts with Windows and keeps itself up to date from this repository: when a
 newer `MeetingAV.exe` is committed, it downloads it and a **Restart to update**
-button appears (both can be switched off under Settings → App).
+button appears (both can be switched off under Settings → This PC).
 
 It opens in **Simple** mode: the timer, the picture and the shots. Everything
 automatic keeps running; **Simple** switches to the full view (sound, settings); **Menu** has the grid view, tablet, checks and settings.
@@ -67,10 +67,26 @@ Meeting AV makes one.
   Demonstrations, Speaker, Table and Platform wide depending on where they stand
   on the platform. Picking a shot yourself unticks it. With a Reader
   scene, someone standing at the table cuts to Reader and someone sitting to
-  Table: under Follow people → *Adjust…*, set the reader line between a seated
+  Table: under Settings → Shots → *Follow people*, set the reader line between a seated
   head and a standing one.
+- **Which meeting:** Saturday and Sunday it's the weekend meeting (its times, its
+  parts, its countdown, its media in JW Library), Monday to Friday the midweek one.
+- **Hall TV: JW Library | Zoom** (by the shots): picks what the hall TV shows, JW
+  Library's screen or Zoom's second window (Zoom's "dual monitors" mode keeps it
+  on that screen). It takes a few seconds, and leaves JW Library on the meeting's
+  media.
+- **Arrange** (top): Meeting AV on the left half of the PC's screen, JW Library
+  top right, Zoom's meeting bottom right. JW Library's TV and Zoom's window on
+  it are left alone.
+- **Meeting media** and **Playlists** (by the Auto ticks): open this week's
+  meeting in JW Library, on its pictures and videos, or JW Library's playlists.
 - **Auto-start:** at the meeting time, turns the camera on and cuts from the
   holding screen to Speaker. Set the times under *Change times*.
+- **Shot changes:** a shot you pick cuts straight away; when Meeting AV changes
+  the shot by itself it fades (a third of a second). Settings → Shots switches the
+  fade off.
+- **Notes:** a short note at the bottom says what just happened ("Table on air",
+  "Auto camera off").
 - **Grid:** just the shots, big. Swipe right (or tap the left dot) for the shot
   on air, full screen.
 - **Studies:** starting the Watchtower Study or the Congregation Bible Study on
@@ -81,15 +97,22 @@ Meeting AV makes one.
   one's from that week's workbook on wol.jw.org (kept for offline use). Tap a
   part, press **Start** as the speaker begins, and the speakers' screen counts
   down: green, amber in the last minute, red and counting up once over time.
+  Under the time, *Next:* shows the part after it.
+  The **space bar** does the same as Start/Stop while Meeting AV is the window in
+  front.
   **Stop** gets the next part ready. With no part loaded it shows the time of
   day. It sits at the top. Until you press **Start**, which begins the meeting's
   first part, the speakers see the time of day; switch **Screen** on to show it, and pick which screen under
-  Settings → Timer. In the grid view, a fourth page (swipe left past Sound)
+  Settings → Meeting. In the grid view, a fourth page (swipe left past Sound)
   controls it from a tablet.
 - **Countdown:** in the last 5 minutes before the meeting, the speakers' screen
-  and JW Library's screen (the hall TV) show "Meeting starts in 4:59…". It steps
-  aside while JW Library shows a picture or video, and goes at the start time.
-  Settings → Timer switches the one on JW Library's screen off.
+  and JW Library's screen (the hall TV) show "Meeting starts in 4:59…". For it,
+  Meeting AV switches JW Library's second display off, and back on as it reaches
+  0:00, leaving JW Library on the meeting's media. Until then pictures
+  and videos don't reach the TV; **JW Library on the TV** (by the timer) gives it
+  back sooner. Settings → Meeting switches the countdown on the TV off.
+- **JW Library:** opened while Meeting AV is running, it goes straight to the
+  meeting's media.
 
 ## Tablet or phone
 
@@ -100,6 +123,18 @@ Meeting AV makes one.
 
 If the home-screen app says OBS didn't accept the password, delete it and do
 steps 2–3 again.
+
+## Look
+
+Settings → This PC → **Look**: the same as Windows, light, dark, or **dim** for a
+darkened hall. **Size** makes everything smaller to fit more on the screen
+(Compact, More compact, Smallest), or larger. Each PC and tablet keeps its own.
+
+## Moving to another PC
+
+Settings → This PC → **Save settings to a file** puts the meeting times, shots, following people, sound and
+timer choices in `Meeting AV settings.json` (in Downloads). On the other PC, **Load settings from a file**.
+The OBS scenes move separately: in OBS, **Scene Collection → Export**, then **Import** on the other PC.
 
 ## Building
 
