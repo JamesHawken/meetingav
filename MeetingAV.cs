@@ -1572,6 +1572,8 @@ static class MeetingAV
     static void WatchJwStart()
     {
         bool wasRunning = JwRunning();
+        bool zoomWasOnTv = false;
+        DateTime zoomLeftAt = DateTime.MinValue;
         // Left switched off by a Meeting AV that stopped mid-countdown: switched back on.
         if (File.Exists(JwOffFile)) { JwDisplayOff = true; if (!wasRunning) { try { File.Delete(JwOffFile); } catch { } JwDisplayOff = false; } }
         while (true)
@@ -1585,6 +1587,22 @@ static class MeetingAV
                 JwOpenMeetings();
             }
             if (!running && JwDisplayOff && !JwBusy) { JwDisplayOff = false; try { File.Delete(JwOffFile); } catch { } }
+            // Zoom's window on the hall TV closing (the meeting ended, or Zoom quit) takes JW Library's
+            // picture there away with it, leaving the desktop: JW Library's second display is switched
+            // off and on a few seconds later, which brings it back.
+            Screen tvScreen = JwTargetScreen();
+            bool zoomOnTv = tvScreen != null && FindTopWindow("ConfMultiTabContentWndClass", tvScreen) != IntPtr.Zero;
+            if (zoomWasOnTv && !zoomOnTv) zoomLeftAt = DateTime.Now;
+            zoomWasOnTv = zoomOnTv;
+            if (zoomLeftAt != DateTime.MinValue && DateTime.Now - zoomLeftAt > TimeSpan.FromSeconds(3))
+            {
+                if (running && !JwDisplayOff && !JwBusy && JwNavigating == 0 && (CountdownForm == null || CountdownForm.IsDisposed))
+                {
+                    TvShowsZoom = false;
+                    if (JwSetSecondDisplay(false, false)) { Thread.Sleep(500); JwSetSecondDisplay(true, false); }
+                }
+                zoomLeftAt = DateTime.MinValue;
+            }
             wasRunning = running;
         }
     }
