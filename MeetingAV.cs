@@ -118,6 +118,7 @@ static class MeetingAV
         new Thread(() => Serve(listener)) { IsBackground = true }.Start();
         new Thread(WatchJwMedia) { IsBackground = true }.Start();
         new Thread(WatchJwStart) { IsBackground = true }.Start();
+        new Thread(HoldMicSteady) { IsBackground = true }.Start();
 
         Application.EnableVisualStyles();
         UiThread = new Control();
@@ -1096,7 +1097,20 @@ static class MeetingAV
     static long MutedFor, ZoomMutedAt;
     static string ZoomMuteResult = "";
 
-    static string MuteZoomEveryone()
+    // One at a time (with the JW Library buttons too): a second request while one is under way waits
+    // for it (up to 10 seconds) rather than running at the same time, with both moving the mouse.
+    static string MuteZoomEveryone() { return OneAtATime(() => KeepingWindows(() => TwiceIfNeeded(MuteZoomEveryoneHere, "muted"))); }
+
+    static string OneAtATime(Func<string> work)
+    {
+        int tries = 0;
+        while (Interlocked.Exchange(ref JwNavigating, 1) == 1)
+            if (++tries > 100) return "busy - try again"; else Thread.Sleep(100);
+        try { return work(); }
+        finally { JwNavigating = 0; }
+    }
+
+    static string MuteZoomEveryoneHere()
     {
         Screen tv = JwTargetScreen();
         IntPtr zoom = IntPtr.Zero;
@@ -1113,6 +1127,7 @@ static class MeetingAV
         BringToFront(zoom);
         for (int i = 0; i < 10 && GetForegroundWindow() != zoom; i++) Thread.Sleep(50);
         if (GetForegroundWindow() != zoom) return "couldn't bring Zoom forward";
+        FitZoom(zoom);
         // "Mute all" at the bottom of Zoom's Participants panel (Alt+M would be a toggle: pressed
         // when everyone is muted, it asks them all to unmute). The panel is opened if it's closed.
         Point mouseAt = Cursor.Position;
@@ -1123,10 +1138,10 @@ static class MeetingAV
             keybd_event(0x55, 0, 0, UIntPtr.Zero);
             keybd_event(0x55, 0, 2, UIntPtr.Zero);
             keybd_event(0x12, 0, 2, UIntPtr.Zero);
-            for (int i = 0; i < 10 && muteAll.IsEmpty; i++) { Thread.Sleep(200); muteAll = FindMuteAll(zoom); }
+            for (int i = 0; i < 10 && muteAll.IsEmpty; i++) { Thread.Sleep(200); FitZoom(zoom); muteAll = FindMuteAll(zoom); }
         }
         if (muteAll.IsEmpty) { if (was != IntPtr.Zero && was != zoom) BringToFront(was); return "couldn't find Zoom's Mute all"; }
-        Click(muteAll.X, muteAll.Y);
+        if (!ClickZoom(zoom, muteAll)) { if (was != IntPtr.Zero && was != zoom) BringToFront(was); return "couldn't click Zoom's Mute all"; }
         Cursor.Position = mouseAt;
         // Zoom asks to confirm, with "Allow participants to unmute themselves": its box shows no
         // controls to Windows' accessibility interface, so it's read by colour - the tickbox (left)
@@ -1171,6 +1186,63 @@ static class MeetingAV
         return result;
     }
 
+    // Runs something that works in Zoom's window, then puts the PC's screen back as it was: every
+    // window on it the same size and place, in the same order front to back, and the same one active.
+    // Zoom's Participants panel, if it had to be opened, is closed again.
+    static string KeepingWindows(Func<string> work)
+    {
+        IntPtr active = GetForegroundWindow();
+        var windows = new List<IntPtr>();   // front to back
+        var where = new Dictionary<IntPtr, RECT>();
+        var maxed = new HashSet<IntPtr>();
+        Screen pc = Screen.PrimaryScreen;
+        EnumWindows((h, p) =>
+        {
+            RECT r;
+            if (IsWindowVisible(h) && !IsIconic(h) && GetWindowRect(h, out r) && r.Right - r.Left > 50 &&
+                Screen.FromHandle(h).DeviceName == pc.DeviceName)
+            {
+                windows.Add(h); where[h] = r;
+                if (IsZoomed(h)) maxed.Add(h);
+            }
+            return true;
+        }, IntPtr.Zero);
+        IntPtr zoom = FindTopWindow("ConfMultiTabContentWndClass", pc);
+        bool panelWasOpen = zoom != IntPtr.Zero && FindPanelButtons(zoom) != null;
+        bool toolsWereOpen = panelWasOpen && !HostToolsClose(zoom).IsEmpty;
+        string result = work();
+        // Panes opened for the work closed again: Host tools first (found from the Participants
+        // panel's buttons), then the Participants panel.
+        if (zoom != IntPtr.Zero && !toolsWereOpen && !HostToolsClose(zoom).IsEmpty)
+        {
+            BringToFront(zoom);
+            Thread.Sleep(150);
+            CloseHostTools(zoom);
+            Thread.Sleep(400);
+        }
+        if (zoom != IntPtr.Zero && !panelWasOpen && FindPanelButtons(zoom) != null)
+        {
+            BringToFront(zoom);
+            Thread.Sleep(150);
+            keybd_event(0x12, 0, 0, UIntPtr.Zero);     // Alt+U closes the Participants panel again
+            keybd_event(0x55, 0, 0, UIntPtr.Zero);
+            keybd_event(0x55, 0, 2, UIntPtr.Zero);
+            keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            Thread.Sleep(300);
+        }
+        // Back to front: each brought up in turn, so the front one ends up in front.
+        for (int i = windows.Count - 1; i >= 0; i--)
+        {
+            IntPtr h = windows[i];
+            if (!IsWindow(h)) continue;
+            RECT r = where[h];
+            if (maxed.Contains(h)) SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+            else SetWindowPos(h, IntPtr.Zero, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top, 0x0010);
+        }
+        if (active != IntPtr.Zero && IsWindow(active)) BringToFront(active);
+        return result;
+    }
+
     // Windows only lets the program in front choose what comes to the front, so this joins in with
     // the window in front for a moment to do it.
     static void BringToFront(IntPtr h)
@@ -1200,10 +1272,10 @@ static class MeetingAV
     // Invite, Mute all, More: their centres, or null.
     static Point[] FindPanelButtons(IntPtr zoom)
     {
-        RECT r;
-        if (!GetWindowRect(zoom, out r)) return null;
+        Rectangle z = ZoomArea(zoom);
+        if (z.Width < 100 || z.Height < 100) return null;
         // The right half, top to bottom: Host tools open under the panel push its buttons up.
-        var area = Rectangle.FromLTRB(r.Left + (r.Right - r.Left) / 2, r.Top + 60, r.Right, r.Bottom);
+        var area = Rectangle.FromLTRB(z.Left + z.Width / 2, z.Top + 60, z.Right, z.Bottom);
         using (var b = new Bitmap(area.Width, area.Height))
         {
             using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
@@ -1211,10 +1283,13 @@ static class MeetingAV
             {
                 List<int[]> row = ButtonRow(b, y);
                 if (row == null) continue;
-                // The row's middle: the bottom edge found first is just below Zoom's menu when it's open.
-                int top = y;
-                while (top - 2 > 0 && ButtonRow(b, top - 2) != null) top -= 2;
-                int mid = (top + y) / 2;
+                // The row's middle, from the middle button's top and bottom edges (where the panel's
+                // grey starts): the bottom edge found first is just below Zoom's menu when it's open.
+                int cx = (row[1][0] + row[1][1]) / 2, top = y, bottom = y;
+                Func<Color, bool> panel = c => c.R >= 22 && c.R <= 36 && Math.Abs(c.R - c.G) < 6 && Math.Abs(c.G - c.B) < 8;
+                while (top > 0 && !panel(b.GetPixel(cx - 20, top - 1))) top--;
+                while (bottom < b.Height - 1 && !panel(b.GetPixel(cx - 20, bottom + 1))) bottom++;
+                int mid = (top + bottom) / 2;
                 return row.ConvertAll(m => new Point(area.X + (m[0] + m[1]) / 2, area.Y + mid)).ToArray();
             }
         }
@@ -1266,7 +1341,19 @@ static class MeetingAV
     // In Zoom's Host tools pane, under "Participant permissions", the first switch is "Unmute
     // themselves". The pane is opened from the Participants panel's More menu (its last item) if it's
     // closed. Read by colour and clicked with the mouse, like the mute.
-    static string AllowZoomUnmute()
+    static string AllowZoomUnmute() { return OneAtATime(() => KeepingWindows(() => TwiceIfNeeded(AllowZoomUnmuteHere, "allowed"))); }
+
+    // Zoom isn't always ready the first time (still coming to the front, a pane still opening): a
+    // second go, a moment later, unless there's no meeting at all.
+    static string TwiceIfNeeded(Func<string> work, string success)
+    {
+        string result = work();
+        if (result.StartsWith(success) && result != "muted, but couldn't untick unmuting" || result == "no Zoom meeting open") return result;
+        Thread.Sleep(600);
+        return work();
+    }
+
+    static string AllowZoomUnmuteHere()
     {
         Screen tv = JwTargetScreen();
         IntPtr zoom = IntPtr.Zero;
@@ -1283,6 +1370,7 @@ static class MeetingAV
         Point mouseAt = Cursor.Position;
         BringToFront(zoom);
         Thread.Sleep(300);
+        FitZoom(zoom);
         string result;
         try
         {
@@ -1297,20 +1385,20 @@ static class MeetingAV
                     keybd_event(0x55, 0, 0, UIntPtr.Zero);
                     keybd_event(0x55, 0, 2, UIntPtr.Zero);
                     keybd_event(0x12, 0, 2, UIntPtr.Zero);
-                    for (int i = 0; i < 10 && buttons == null; i++) { Thread.Sleep(200); buttons = FindPanelButtons(zoom); }
+                    for (int i = 0; i < 10 && buttons == null; i++) { Thread.Sleep(200); FitZoom(zoom); buttons = FindPanelButtons(zoom); }
                 }
                 if (buttons == null) return "couldn't find Zoom's Participants panel";
                 for (int attempt = 0; attempt < 2 && sw.IsEmpty; attempt++)
                 {
-                    Click(buttons[2].X, buttons[2].Y);   // More
+                    if (!ClickZoom(zoom, buttons[2])) break;   // More
                     Thread.Sleep(900);                   // the menu finishes appearing
                     // The menu opens over the buttons, its last item (Host tools) level with them. Only
                     // clicked once the buttons are covered - never Mute all by mistake.
                     if (FindPanelButtons(zoom) != null) continue;
                     // Host tools: the menu's last line of words, found by its white text.
-                    Point item = LowestTextLine(new Rectangle(buttons[0].X, buttons[1].Y - 160, buttons[2].X + 40 - buttons[0].X, 190));
-                    if (item.IsEmpty) continue;
-                    Click(buttons[1].X, item.Y);
+                    Rectangle look = Rectangle.Intersect(new Rectangle(buttons[0].X, buttons[1].Y - 160, buttons[2].X + 40 - buttons[0].X, 180), ZoomArea(zoom));
+                    Point item = look.IsEmpty ? Point.Empty : LowestTextLine(look);
+                    if (item.IsEmpty || !ClickZoom(zoom, new Point(buttons[1].X, item.Y))) { keybd_event(0x1B, 0, 0, UIntPtr.Zero); keybd_event(0x1B, 0, 2, UIntPtr.Zero); continue; }
                     Thread.Sleep(300);
                     IntPtr oops = FindWindow("zChangeNameWndClass", null);   // Mute all after all: cancelled
                     if (oops != IntPtr.Zero && IsWindowVisible(oops))
@@ -1326,7 +1414,7 @@ static class MeetingAV
             }
             if (!on)
             {
-                Click(sw.X, sw.Y);
+                if (!ClickZoom(zoom, sw)) return "couldn't reach the switch";
                 Cursor.Position = mouseAt;   // the pointer over it changes its colours
                 // Zoom slides the switch across, and may move the pane: looked at for up to 2 seconds.
                 for (int i = 0; i < 10 && !on; i++)
@@ -1346,6 +1434,79 @@ static class MeetingAV
         return result;
     }
 
+    // Closes the Host tools pane with the ✕ at the right of its heading: under the Participants
+    // panel's buttons, the first line with light icons at the pane's right edge, its rightmost one
+    // (the one left of it opens the pane in a window of its own, so that's never the one clicked).
+    static void CloseHostTools(IntPtr zoom)
+    {
+        Point x = HostToolsClose(zoom);
+        if (!x.IsEmpty) ClickZoom(zoom, x);
+    }
+
+    // Where the Host tools pane's ✕ is, or empty when it isn't open (or can't be told).
+    static Point HostToolsClose(IntPtr zoom)
+    {
+        Point[] buttons = FindPanelButtons(zoom);
+        if (buttons == null) return HostToolsAloneClose(zoom);
+        Rectangle z = ZoomArea(zoom);
+        if (buttons == null || z.IsEmpty) return Point.Empty;
+        var look = Rectangle.Intersect(Rectangle.FromLTRB(z.Right - 70, buttons[1].Y + 20, z.Right - 2, buttons[1].Y + 110), z);
+        if (look.Width < 20 || look.Height < 20) return Point.Empty;
+        using (var b = new Bitmap(look.Width, look.Height))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(look.Location, Point.Empty, look.Size);
+            Func<Color, bool> icon = c => c.R > 140 && Math.Abs(c.R - c.G) < 12 && Math.Abs(c.G - c.B) < 14;
+            for (int y = 0; y < b.Height; y++)
+            {
+                int right = -1, count = 0;
+                for (int x = 0; x < b.Width; x++) if (icon(b.GetPixel(x, y))) { right = x; count++; }
+                if (count < 2) continue;
+                // That line's rightmost icon: its pixels within 14px left of the rightmost one.
+                int left = right;
+                for (int x = right; x >= Math.Max(0, right - 14); x--) if (icon(b.GetPixel(x, y))) left = x;
+                return new Point(look.X + (left + right) / 2, look.Y + y + 5);
+            }
+        }
+        return Point.Empty;
+    }
+
+    // Host tools open without the Participants panel: found by its "Suspend all" heading, and its ✕
+    // on the first line above that with two light icons at the pane's right edge (⧉ ✕).
+    static Point HostToolsAloneClose(IntPtr zoom)
+    {
+        Rectangle z = ZoomArea(zoom);
+        if (z.Width < 200 || z.Height < 100) return Point.Empty;
+        var area = Rectangle.FromLTRB(z.Right - 170, z.Top + 30, z.Right - 2, z.Bottom - 2);
+        using (var b = new Bitmap(area.Width, area.Height))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
+            Func<Color, bool> pill = c => c.R >= 44 && c.R <= 58 && Math.Abs(c.R - c.G) < 5 && Math.Abs(c.G - c.B) < 6;
+            Func<Color, bool> blueWord = c => c.B > 150 && c.B - c.R > 70;
+            Func<Color, bool> icon = c => c.R > 140 && Math.Abs(c.R - c.G) < 12 && Math.Abs(c.G - c.B) < 14;
+            int heading = -1;
+            for (int y = 0; y < b.Height && heading < 0; y++)
+            {
+                int pills = 0, words = 0;
+                for (int x = 0; x < b.Width; x++) { Color c = b.GetPixel(x, y); if (pill(c)) pills++; else if (blueWord(c)) words++; }
+                if (pills >= 30 && words >= 3) heading = y;
+            }
+            if (heading < 0) return Point.Empty;
+            int strip = b.Width - 70;
+            for (int y = heading - 12; y >= 0; y--)
+            {
+                // Light pixels in the strip at the right, in two groups at least 10px apart.
+                int first = -1, last = -1, groups = 0, prev = -100;
+                for (int x = strip; x < b.Width; x++)
+                    if (icon(b.GetPixel(x, y))) { if (x - prev > 10) groups++; if (first < 0) first = x; last = x; prev = x; }
+                if (groups < 2) continue;
+                int left = last;
+                for (int x = last; x >= Math.Max(strip, last - 14); x--) if (icon(b.GetPixel(x, y))) left = x;
+                return new Point(area.X + (left + last) / 2, area.Y + y + 5);
+            }
+        }
+        return Point.Empty;
+    }
+
     // In a short Zoom window the Host tools pane is cut off before its permissions: it's scrolled
     // down, a few steps at a time, until the switch shows.
     static Point FindUnmuteSwitchScrolling(IntPtr zoom, out bool on)
@@ -1356,8 +1517,9 @@ static class MeetingAV
         Point[] buttons = FindPanelButtons(zoom);
         if (buttons == null) return sw;   // no Participants panel, so no Host tools under it
         // Under the panel's buttons is where Host tools sit.
-        var over = new Point(buttons[1].X, Math.Min(r.Bottom - 30, buttons[1].Y + 120));
-        if (over.Y <= buttons[1].Y + 40) return sw;
+        Rectangle z = ZoomArea(zoom);
+        var over = new Point(buttons[1].X, Math.Min(z.Bottom - 30, buttons[1].Y + 120));
+        if (over.Y <= buttons[1].Y + 40 || !z.Contains(over)) return sw;
         for (int i = 0; i < 6 && sw.IsEmpty; i++)
         {
             Cursor.Position = over;
@@ -1451,6 +1613,39 @@ static class MeetingAV
             if (n1 >= 6) left = new Rectangle(area.X + l1, area.Y + t1, r1 - l1 + 1, b1 - t1 + 1);
             if (n2 >= 20) right = new Rectangle(area.X + l2, area.Y + t2, r2 - l2 + 1, b2 - t2 + 1);
         }
+    }
+
+    // Zoom grows its window when a panel opens, which can push the panel's buttons under the
+    // taskbar: the window is moved up, or made shorter, to sit above it. (Put back afterwards.)
+    static void FitZoom(IntPtr zoom)
+    {
+        RECT r;
+        if (!GetWindowRect(zoom, out r)) return;
+        Rectangle wa = Screen.FromHandle(zoom).WorkingArea;
+        const int border = 7;   // Windows' invisible border, below the visible edge
+        if (r.Bottom - border <= wa.Bottom && r.Top >= wa.Top) return;
+        int h = Math.Min(r.Bottom - r.Top, wa.Height + border);
+        int top = Math.Max(wa.Top, wa.Bottom + border - h);
+        SetWindowPos(zoom, IntPtr.Zero, r.Left, top, r.Right - r.Left, h, 0x0004 | 0x0010);
+        Thread.Sleep(300);
+    }
+
+    // The part of Zoom's window that can be seen and clicked: inside the window and above the taskbar.
+    static Rectangle ZoomArea(IntPtr zoom)
+    {
+        RECT r;
+        if (!GetWindowRect(zoom, out r)) return Rectangle.Empty;
+        return Rectangle.Intersect(Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom), Screen.FromHandle(zoom).WorkingArea);
+    }
+
+    // A click inside Zoom's window only: anywhere else (the taskbar, another program) is refused.
+    static bool ClickZoom(IntPtr zoom, Point p)
+    {
+        Rectangle a = ZoomArea(zoom);
+        a.Inflate(-2, -2);
+        if (p.IsEmpty || !a.Contains(p)) return false;
+        Click(p.X, p.Y);
+        return true;
     }
 
     // Zoom only takes a click on something the mouse has been seen to arrive over, so the pointer
@@ -1729,6 +1924,20 @@ static class MeetingAV
                 json.Append(AudioLevel(level, mute, peak));
             }
             catch { json.Append("null"); }   // no speakers
+            // The microphone: Windows' default recording device (what Zoom uses unless told otherwise).
+            json.Append(",\"mic\":");
+            try
+            {
+                IAudioEndpointVolume volume; IAudioMeterInformation meter;
+                Microphone(out volume, out meter);
+                float level, peak; bool mute;
+                volume.GetMasterVolumeLevelScalar(out level); volume.GetMute(out mute); meter.GetPeakValue(out peak);
+                json.Append(AudioLevel(level, mute, peak));
+            }
+            catch { json.Append("null"); }   // no microphone
+            json.Append(",\"micHold\":" + (MicHold >= 0 ? MicHold.ToString() : "null"));
+            float tz = ToZoomPeak();
+            json.Append(",\"toZoom\":" + (tz < 0 ? "null" : tz.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)));
             foreach (var app in AudioApps)
             {
                 json.Append(",\"" + app.Key + "\":");
@@ -1759,7 +1968,18 @@ static class MeetingAV
         {
             try
             {
-                if (target == "system")
+                if (target == "mic")
+                {
+                    IAudioEndpointVolume v; IAudioMeterInformation m;
+                    Microphone(out v, out m);
+                    if (volume.HasValue)
+                    {
+                        v.SetMasterVolumeLevelScalar(volume.Value / 100f, ref none);
+                        if (MicHold >= 0) SaveMicHold(volume.Value);   // held at the new level
+                    }
+                    if (mute.HasValue) v.SetMute(mute.Value, ref none);
+                }
+                else if (target == "system")
                 {
                     IMMDevice speakers;
                     Enumerator().GetDefaultAudioEndpoint(0, 1, out speakers);
@@ -1819,6 +2039,166 @@ static class MeetingAV
         IChannelAudioVolume channels = (IChannelAudioVolume)session;
         uint n; channels.GetChannelCount(out n);
         for (uint c = 0; c < n; c++) channels.SetChannelVolume(c, level, ref none);
+    }
+
+    // ---- The microphone held steady ---------------------------------------------------------------
+    // Zoom (and Windows) can turn the microphone up and down by themselves. Held, Meeting AV puts it
+    // back to the chosen level within half a second, whatever changes it. The level is kept in a file,
+    // so it stays held after a restart.
+    static int MicHold = ReadMicHold();   // 0-100, or -1 when not held
+    static string MicHoldFile { get { return Path.Combine(DataDir, "mic-hold.txt"); } }
+
+    static int ReadMicHold()
+    {
+        int v;
+        try { if (File.Exists(MicHoldFile) && int.TryParse(File.ReadAllText(MicHoldFile).Trim(), out v) && v >= 0 && v <= 100) return v; } catch { }
+        return -1;
+    }
+
+    static void SaveMicHold(int level)
+    {
+        MicHold = level;
+        try { if (level < 0) File.Delete(MicHoldFile); else File.WriteAllText(MicHoldFile, level.ToString()); } catch { }
+    }
+
+    static void Microphone(out IAudioEndpointVolume volume, out IAudioMeterInformation meter)
+    {
+        IMMDevice mic;
+        Enumerator().GetDefaultAudioEndpoint(1, 0, out mic);   // eCapture, eConsole
+        volume = (IAudioEndpointVolume)Activate(mic, typeof(IAudioEndpointVolume).GUID);
+        meter = (IAudioMeterInformation)Activate(mic, typeof(IAudioMeterInformation).GUID);
+    }
+
+    static void HoldMicSteady()
+    {
+        Guid none = Guid.Empty;
+        while (true)
+        {
+            Thread.Sleep(500);
+            if (MicHold < 0) continue;
+            lock (AudioLock)
+            {
+                try
+                {
+                    IAudioEndpointVolume v; IAudioMeterInformation m;
+                    Microphone(out v, out m);
+                    float now;
+                    v.GetMasterVolumeLevelScalar(out now);
+                    if (Math.Abs(now * 100 - MicHold) >= 1) v.SetMasterVolumeLevelScalar(MicHold / 100f, ref none);
+                }
+                catch { }
+            }
+        }
+    }
+
+    // ---- Sound devices, and the sound going to Zoom ------------------------------------------------
+    // Zoom's sound can come levelled from OBS through VB-CABLE, a free virtual cable: OBS plays it
+    // into "CABLE Input" and Zoom's microphone is "CABLE Output".
+
+    static List<string[]> AudioDevices(int flow)   // [id, name] of each working device; 0 = outputs, 1 = inputs
+    {
+        var list = new List<string[]>();
+        lock (AudioLock)
+        {
+            try
+            {
+                IMMDeviceCollection all;
+                Enumerator().EnumAudioEndpoints(flow, 1, out all);
+                int n; all.GetCount(out n);
+                var nameKey = new PropertyKey { fmtid = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), pid = 14 };   // friendly name
+                for (int i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        IMMDevice d; all.Item(i, out d);
+                        string id; d.GetId(out id);
+                        IPropertyStore store; d.OpenPropertyStore(0, out store);
+                        PropVariant v; store.GetValue(ref nameKey, out v);
+                        list.Add(new[] { id, v.vt == 31 ? Marshal.PtrToStringUni(v.p) : id });
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+        return list;
+    }
+
+    static string[] CableDevice(int flow)   // VB-CABLE's input (an output for Windows) or output (an input)
+    {
+        foreach (string[] d in AudioDevices(flow))
+            if (d[1].IndexOf(flow == 0 ? "CABLE Input" : "CABLE Output", StringComparison.OrdinalIgnoreCase) >= 0) return d;
+        return null;
+    }
+
+    static string AudioDevicesJson()
+    {
+        var sb = new StringBuilder("{\"inputs\":[");
+        bool first = true;
+        foreach (string[] d in AudioDevices(1))
+        {
+            if (d[1].IndexOf("CABLE Output", StringComparison.OrdinalIgnoreCase) >= 0) continue;   // that's Zoom's side
+            sb.Append((first ? "" : ",") + "{\"id\":" + Json(d[0]) + ",\"name\":" + Json(d[1]) + "}");
+            first = false;
+        }
+        string[] cin = CableDevice(0), cout = CableDevice(1);
+        sb.Append("],\"cableIn\":" + (cin == null ? "null" : "{\"id\":" + Json(cin[0]) + ",\"name\":" + Json(cin[1]) + "}"));
+        sb.Append(",\"cableOut\":" + (cout == null ? "null" : Json(cout[1])) + "}");
+        return sb.ToString();
+    }
+
+    // How loud the sound arriving at Zoom is (VB-CABLE's output), 0-1; -1 without VB-CABLE.
+    static float ToZoomPeak()
+    {
+        string[] cout = CableDevice(1);
+        if (cout == null) return -1;
+        lock (AudioLock)
+        {
+            try
+            {
+                IMMDeviceCollection all;
+                Enumerator().EnumAudioEndpoints(1, 1, out all);
+                int n; all.GetCount(out n);
+                for (int i = 0; i < n; i++)
+                {
+                    IMMDevice d; all.Item(i, out d);
+                    string id; d.GetId(out id);
+                    if (id != cout[0]) continue;
+                    var meter = (IAudioMeterInformation)Activate(d, typeof(IAudioMeterInformation).GUID);
+                    float p; meter.GetPeakValue(out p);
+                    return p;
+                }
+            }
+            catch { }
+        }
+        return -1;
+    }
+
+    // OBS writes the monitoring device it opened into its log when it starts ("Audio monitoring
+    // device:" then "name: ..."): the newest log says where monitored sound really goes.
+    static string ObsMonitoringDevice()
+    {
+        try
+        {
+            var logs = new DirectoryInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"obs-studio\logs"));
+            FileInfo newest = null;
+            foreach (FileInfo f in logs.GetFiles("*.txt")) if (newest == null || f.LastWriteTime > newest.LastWriteTime) newest = f;
+            if (newest == null) return "";
+            string found = "";
+            using (var fs = new FileStream(newest.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var r = new StreamReader(fs))
+            {
+                bool next = false;
+                string line;
+                while ((line = r.ReadLine()) != null)
+                {
+                    if (line.Contains("Audio monitoring device:")) { next = true; continue; }
+                    if (next) { int i = line.IndexOf("name:"); if (i >= 0) found = line.Substring(i + 5).Trim(); next = false; }
+                }
+            }
+            return found;
+        }
+        catch { return ""; }
     }
 
     static string AudioLevel(float volume, bool mute, float peak)
@@ -2324,6 +2704,33 @@ static class MeetingAV
                 SendJson(stream, OnUi(() => ScreensJson()));
             else if (path == "/audio" && local)
                 SendJson(stream, AudioJson());
+            else if (path == "/obs/started" && local)   // when OBS last started (ms since 1970), 0 if it isn't running
+            {
+                long started = 0;
+                foreach (Process p in Process.GetProcessesByName("obs64"))
+                    try { started = Math.Max(started, new DateTimeOffset(p.StartTime).ToUnixTimeMilliseconds()); } catch { }
+                SendJson(stream, "{\"started\":" + started + "}");
+            }
+            else if (path == "/obs/monitoring" && local)   // the monitoring device OBS is really using, from its log
+                SendJson(stream, "{\"device\":" + Json(ObsMonitoringDevice()) + "}");
+            else if (path == "/audio/devices" && local)
+                SendJson(stream, AudioDevicesJson());
+            else if (path == "/audio/hold" && local)   // on=1 holds the microphone at its level now, on=0 lets go
+            {
+                if (query.Contains("on=0")) SaveMicHold(-1);
+                else
+                {
+                    try
+                    {
+                        IAudioEndpointVolume v; IAudioMeterInformation m;
+                        lock (AudioLock) Microphone(out v, out m);
+                        float now; v.GetMasterVolumeLevelScalar(out now);
+                        SaveMicHold((int)Math.Round(now * 100));
+                    }
+                    catch { }
+                }
+                SendJson(stream, AudioJson());
+            }
             else if (path == "/audio/set" && local)
             {
                 Match t = Regex.Match(query, "target=(\\w+)"), v = Regex.Match(query, "vol=(\\d+)"), m = Regex.Match(query, "mute=([01])");
@@ -2494,7 +2901,23 @@ interface IMMDeviceCollection
 interface IMMDevice
 {
     void Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
+    void OpenPropertyStore(int access, out IPropertyStore store);
+    void GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
 }
+
+[ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IPropertyStore
+{
+    void GetCount(out int count);
+    void GetAt(int index, out PropertyKey key);
+    void GetValue(ref PropertyKey key, out PropVariant value);
+}
+
+[StructLayout(LayoutKind.Sequential)]
+struct PropertyKey { public Guid fmtid; public int pid; }
+
+[StructLayout(LayoutKind.Sequential)]
+struct PropVariant { public short vt; short r1, r2, r3; public IntPtr p; IntPtr p2; }
 
 [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioEndpointVolume

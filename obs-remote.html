@@ -241,6 +241,18 @@
   .mix .meter span { display: block; height: 100%; width: 0; background: var(--ok); transition: width .1s linear; }
   .mix .val { font-size: 13px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .mix.off .name, .mix.off .slide { opacity: .45; }
+  .zsGo, .zsGo:hover { background: var(--accent); color: #fff; font-weight: 700; }
+  .toZoom { display: grid; grid-template-columns: 34px 88px 1fr 64px; align-items: center; gap: 12px; font-size: 14px; margin-top: 6px; }
+  .toZoom .ico { width: 36px; height: 36px; display: grid; place-items: center; color: var(--muted); }
+  .toZoom .name { font-weight: 600; }
+  .toZoom .bar { position: relative; height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+  .toZoom .bar span { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ok); transition: width .1s linear; }
+  .toZoom .bar span.quiet { background: var(--muted); } .toZoom .bar span.hot { background: var(--live); }
+  .toZoom .bar::after { content: ""; position: absolute; top: 0; bottom: 0; left: 55%; width: 25%; border-left: 1px dashed var(--muted); border-right: 1px dashed var(--muted); }
+  .toZoom .val { font-size: 13px; color: var(--muted); text-align: right; }
+  .micRow { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .micHold { justify-self: end; align-self: flex-end; margin-top: -2px; font-size: 13px; }
+  .mixer.big .micHold { font-size: 18px; padding: 10px 14px; align-self: center; }
   /* The Sound page: three big rows in the middle of the screen, easy to hit with a finger. */
   .mixPage { overflow-y: auto; display: flex; align-items: center; justify-content: center;
              padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
@@ -351,11 +363,22 @@
   .seg button svg.i { width: 16px; height: 16px; flex: none; }
   .seg button:hover { background: var(--btn-hover); }
   .seg button:disabled { opacity: .5; }
-  .seg.pick button { color: var(--muted); }
-  .seg.pick button:hover { color: var(--text); }
-  .seg.pick button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  /* A two-way switch: a sliding pill on a dark track, and a round marker on each side - filled on
+     the side that's on - so it reads as "one or the other", not as two buttons. */
+  .seg.pick { position: relative; background: color-mix(in srgb, var(--bg) 60%, #000); border: 1px solid var(--line); }
+  .seg.pick::before { content: ""; position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 4.5px);
+                      border-radius: 7px; background: var(--accent); transition: transform .25s ease; opacity: 0; }
+  .seg.pick:has(button:nth-child(1)[aria-pressed="true"])::before { opacity: 1; transform: translateX(0); }
+  .seg.pick:has(button:nth-child(2)[aria-pressed="true"])::before { opacity: 1; transform: translateX(calc(100% + 3px)); }
+  .seg.pick button { position: relative; z-index: 1; color: var(--muted); background: none; }
+  .seg.pick button::before { content: ""; width: 12px; height: 12px; border-radius: 50%; flex: none;
+                             border: 2px solid currentColor; box-sizing: border-box; }
+  .seg.pick button:hover { color: var(--text); background: none; }
+  .seg.pick button[aria-pressed="true"] { color: #fff; }
+  .seg.pick button[aria-pressed="true"]::before { background: #fff; border-color: #fff; }
   #tvPick button[aria-pressed="true"] { cursor: default; }
   .seg.pick button.going { background: var(--btn-hover); color: var(--text); }
+  .seg.pick button.going::before { border-style: dotted; animation: spin 1s linear infinite; }
   .seg.pick button.going::after { content: "…"; }
   body.touch .seg button { padding: 12px 14px; font-size: 16px; }
   .tickStatus { font-weight: 400; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
@@ -547,6 +570,11 @@
             <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
           <div class="mix" data-target="jw"><button class="mute"></button><span class="name">JW Library</span>
             <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <div class="mix micRow" data-target="mic"><button class="mute"></button><span class="name">Microphone</span>
+            <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <button class="toggle micHold" role="switch" title="Keep the microphone at this level: if Zoom or Windows turns it up or down, Meeting AV puts it back">Hold microphone steady<span class="switch"></span></button>
+          <div class="toZoom" hidden title="What Zoom participants hear, after levelling. The dashed band is the right loudness."><span class="ico"></span><span class="name">To Zoom</span>
+            <span class="bar"><span></span></span><span class="val"></span></div>
           <p class="help" id="mixNote"></p>
         </div>
       </div>
@@ -663,6 +691,11 @@
             <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
           <div class="mix" data-target="jw"><button class="mute"></button><span class="name">JW Library</span>
             <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <div class="mix micRow" data-target="mic"><button class="mute"></button><span class="name">Microphone</span>
+            <span class="slide"><input type="range" min="0" max="100"><span class="meter"><span></span></span></span><span class="val"></span></div>
+          <button class="toggle micHold" role="switch" title="Keep the microphone at this level: if Zoom or Windows turns it up or down, Meeting AV puts it back">Hold microphone steady<span class="switch"></span></button>
+          <div class="toZoom" hidden title="What Zoom participants hear, after levelling. The dashed band is the right loudness."><span class="ico"></span><span class="name">To Zoom</span>
+            <span class="bar"><span></span></span><span class="val"></span></div>
         </div>
       </section>
     </div>
@@ -703,6 +736,7 @@
   <nav class="tabs" id="tabs">
     <button data-tab="meeting">Meeting</button>
     <button data-tab="shots">Shots</button>
+    <button data-tab="sound" class="mainOnly">Sound</button>
     <button data-tab="links">Connections</button>
     <button data-tab="pc" id="pcTab">This PC</button>
   </nav>
@@ -729,13 +763,13 @@
         <div class="hint" id="nextWhen"></div>
       </div>
       <label class="tick" id="autoStartRow" style="margin-bottom:14px">
-        <input type="checkbox" id="autoStartChk"> Auto-start: at the start time, turn the camera on and cut from the holding screen to the speaker</label>
+        <input type="checkbox" id="autoStartChk"> Auto-start: at the start time, turn the camera on and cut to the speaker</label>
       <div class="times">
         <span>Midweek</span><select id="midDay"></select><input id="midTime" type="time">
         <span>Weekend</span><select id="weDay"></select><input id="weTime" type="time">
         <span>Countdown text</span><input id="holdText" style="grid-column: span 2" title="{time} is replaced by the time left">
       </div>
-      <p class="help">The holding screen shows the countdown text with <b>{time}</b> replaced by the time left.</p>
+      <p class="help">Before the meeting Zoom sees Monitor (JW Library’s screen). If you put a holding screen scene on air instead, it shows the countdown text with <b>{time}</b> replaced by the time left.</p>
     </div>
 
     <div data-pane="jw">
@@ -774,6 +808,8 @@
 
     <div data-pane="track">
       <div class="track"><canvas id="trackCanvas" width="640" height="360"></canvas></div>
+      <p class="help" style="margin:6px 0 0">Drag the lines on the picture to fit your platform: the two dotted edges
+        between the areas, the bottom edge up to ignore the audience, and the top of the table area down for the reader.</p>
       <div class="rules" id="trackRules"></div>
       <div class="setup">
         <label>Camera that sees the whole platform
@@ -798,6 +834,24 @@
     </div>
 
     <div data-pane="tablet"><div id="remoteBox"></div></div>
+    <div data-pane="zoomsound">
+      <div class="checks" id="zsChecks"></div>
+      <div class="setup">
+        <label>Sound desk feed (the PC input the hall mixer is plugged into)
+          <select id="zsDevice"></select></label>
+        <label>Levelling
+          <select id="zsStrength">
+            <option value="gentle">Gentle — a good mix at the desk, small corrections</option>
+            <option value="normal" selected>Normal — quiet readers lifted, songs kept level with speech</option>
+            <option value="strong">Strong — very uneven mics</option>
+          </select></label>
+      </div>
+      <div class="actions"><button id="zsSetup" class="zsGo"><i data-icon="wand"></i>Set up levelled sound for Zoom</button>
+        <button id="zsRemove">Turn off</button></div>
+      <p class="help" id="zsNote">OBS takes the sound desk's feed, levels it (quiet voices up, loud ones and songs held
+        back, never clipping) and plays it into VB-CABLE. In Zoom, set the microphone to <b>CABLE Output</b> and turn off
+        Zoom's automatic volume. The hall speakers aren't affected.</p>
+    </div>
     <div data-pane="switching">
       <label class="tick"><input type="checkbox" id="fadeChk"> Fade when Meeting AV changes the shot by itself
         (Auto camera, Auto media, the studies, auto-start)</label>
@@ -937,7 +991,7 @@ const SLOTS = {
   monitor: { title: 'Monitor',           hint: 'Screen only',       icon: 'monitor', match: n => (n.includes('monitor') || n.includes('screen')) && !n.includes('speaker') },
   holding: { short: 'Holding', title: 'Holding screen',    hint: 'Before the meeting', icon: 'clock',  match: n => /holding|countdown|waiting|welcome|attente|accueil/.test(n) },
 };
-const OPTIONAL_SLOTS = ['reader', 'spkrdr'];   // shown only when OBS has the scene
+const OPTIONAL_SLOTS = ['reader', 'spkrdr', 'holding'];   // shown only when OBS has the scene
 const ROWS = [
   { slots: ['demo', 'wide', 'reader', 'table'] },   // the platform, left to right
   { slots: ['speaker', 'spkmon', 'spkrdr', 'monitor', 'holding'] },
@@ -1126,6 +1180,7 @@ async function loadAll() {
   loadItems();
   loadTimes().catch(() => {});
   loadTransitions();
+  zoomSoundAfterRestart();
   await fillSourcePickers(inputs.inputs.map(i => i.inputName));
 }
 
@@ -1141,7 +1196,9 @@ async function loadItems() {
 function onEvent(type, e) {
   switch (type) {
     case 'CurrentProgramSceneChanged': state.current = e.sceneName; renderShots(); loadItems(); toast(`${shotName(e.sceneName)} on air`); break;
-    case 'SceneListChanged': state.scenes = e.scenes; renderShots(); break;
+    case 'SceneListChanged': state.scenes = e.scenes; renderShots();
+      if (isMain) call('GetInputList').then(r => { if (r.inputs.some(i => i.inputName === ZS_INPUT)) zoomSoundInAllScenes(); }).catch(() => {});
+      break;
     case 'VirtualcamStateChanged': setCam(e.outputActive); toast(e.outputActive ? 'Camera on — live to Zoom' : 'Camera off'); break;
     case 'CurrentSceneTransitionChanged': trans.current = e.transitionName; break;
     case 'CustomEvent':
@@ -1390,10 +1447,118 @@ function setThumb(name, src) {
 }
 
 // ---------------------------------------------------------------------------
+// Sound to Zoom: the sound desk's feed goes into OBS as an audio input, levelled by filters (a
+// compressor that brings quiet voices up and holds loud ones back, then a limiter so it never clips),
+// and OBS plays it into VB-CABLE, which is Zoom's microphone. The input sits in every scene (audio
+// only, nothing shows), so it keeps playing whatever shot is on air.
+// ---------------------------------------------------------------------------
+const ZS_INPUT = 'Zoom sound (levelled)';
+const ZS_LEVELS = {   // compressor threshold (dB), ratio, make-up gain (dB)
+  gentle: { threshold: -20, ratio: 3, gain: 6 },
+  normal: { threshold: -26, ratio: 4, gain: 10 },
+  strong: { threshold: -32, ratio: 8, gain: 15 },
+};
+async function renderZoomSound() {
+  const box = $('zsChecks');
+  let dev = null;
+  try { dev = await appFetch('/audio/devices'); } catch {}
+  const names = connected ? (await call('GetInputList').catch(() => ({ inputs: [] }))).inputs.map(i => i.inputName) : [];
+  const setUp = names.includes(ZS_INPUT);
+  let current = '';
+  if (setUp) try { current = (await call('GetInputSettings', { inputName: ZS_INPUT })).inputSettings.device_id || ''; } catch {}
+  const rows = [
+    dev && dev.cableIn ? ['ok', 'VB-CABLE is installed'] : ['bad', 'VB-CABLE isn’t installed', 'Free from vb-audio.com (VB-CABLE Driver): run its setup as administrator, then restart the PC.'],
+    setUp ? ['ok', 'OBS levels the sound desk’s feed'] : ['warn', 'Not set up yet', 'Pick the sound desk feed below and press Set up.'],
+    ['warn', 'In Zoom: microphone = “CABLE Output”', 'Zoom → Settings → Audio: Microphone “CABLE Output”, untick “Automatically adjust microphone volume”, background noise suppression Low.'],
+  ];
+  box.innerHTML = rows.map(([level, text, sub]) => `<div class="check ${level}">${icon(level === 'ok' ? 'check' : 'alert')}<div class="text"><div></div><div class="sub"></div></div></div>`).join('');
+  box.querySelectorAll('.check').forEach((c, i) => { c.querySelector('.text > div').textContent = rows[i][1]; c.querySelector('.sub').textContent = rows[i][2] || ''; });
+  const sel = $('zsDevice');
+  sel.innerHTML = '';
+  (dev ? dev.inputs : []).forEach(d => sel.add(new Option(d.name, d.id)));
+  sel.value = current || store.get('zsDevice', '') || (sel.options[0] ? sel.options[0].value : '');
+  $('zsStrength').value = store.get('zsStrength', 'normal');
+  // Without VB-CABLE, OBS would play the feed out of the PC's own speakers: feedback. So not until then.
+  $('zsSetup').disabled = !connected || !dev || !dev.cableIn || !sel.value;
+  $('zsSetup').lastChild.textContent = setUp ? 'Update levelled sound for Zoom' : 'Set up levelled sound for Zoom';
+  $('zsRemove').hidden = !setUp;
+  zoomSoundCable = dev && dev.cableIn;
+}
+let zoomSoundCable = null;
+
+async function setupZoomSound() {
+  if (!zoomSoundCable) throw new Error('Install VB-CABLE first.');
+  const device = $('zsDevice').value, strength = $('zsStrength').value, lv = ZS_LEVELS[strength];
+  store.set('zsDevice', device); store.set('zsStrength', strength);
+  const { scenes } = await call('GetSceneList');
+  const { inputs } = await call('GetInputList');
+  if (!inputs.some(i => i.inputName === ZS_INPUT))
+    await call('CreateInput', { sceneName: scenes[0].sceneName, inputName: ZS_INPUT, inputKind: 'wasapi_input_capture', inputSettings: { device_id: device } });
+  else await call('SetInputSettings', { inputName: ZS_INPUT, inputSettings: { device_id: device } });
+  await zoomSoundInAllScenes();
+  // The levelling: replaced each time, so a new strength takes effect.
+  const { filters } = await call('GetSourceFilterList', { sourceName: ZS_INPUT });
+  for (const f of filters) await call('RemoveSourceFilter', { sourceName: ZS_INPUT, filterName: f.filterName });
+  await call('CreateSourceFilter', { sourceName: ZS_INPUT, filterName: 'Level (compressor)', filterKind: 'compressor_filter',
+    filterSettings: { ratio: lv.ratio, threshold: lv.threshold, attack_time: 5, release_time: 150, output_gain: lv.gain } });
+  await call('CreateSourceFilter', { sourceName: ZS_INPUT, filterName: 'Never too loud (limiter)', filterKind: 'limiter_filter',
+    filterSettings: { threshold: -3, release_time: 60 } });
+  // Heard only through OBS's monitoring device - VB-CABLE - not in the recording or the hall. OBS
+  // only changes monitoring device when it starts: until then it would play out of the PC's
+  // speakers (feedback), so it stays silent until OBS has been restarted (zoomSoundAfterRestart).
+  let restart = false;
+  const cur = await call('GetProfileParameter', { parameterCategory: 'Audio', parameterName: 'MonitoringDeviceId' }).catch(() => ({}));
+  if (cur.parameterValue !== zoomSoundCable.id) {
+    await call('SetProfileParameter', { parameterCategory: 'Audio', parameterName: 'MonitoringDeviceId', parameterValue: zoomSoundCable.id });
+    await call('SetProfileParameter', { parameterCategory: 'Audio', parameterName: 'MonitoringDeviceName', parameterValue: zoomSoundCable.name });
+    restart = true;
+  }
+  await call('SetInputAudioMonitorType', { inputName: ZS_INPUT,
+    monitorType: restart || !(await obsStartedAfterSetup()) ? 'OBS_MONITORING_TYPE_NONE' : 'OBS_MONITORING_TYPE_MONITOR_ONLY' });
+  toast(restart ? 'Set up — close and reopen OBS once to send it to VB-CABLE' : 'Levelled sound for Zoom set up');
+  $('zsNote').textContent = restart ? 'Close OBS and open it again once: OBS only picks up VB-CABLE when it starts.' : $('zsNote').textContent;
+  renderZoomSound();
+}
+
+// Only safe to monitor once OBS is really sending monitored sound to VB-CABLE (it changes device
+// only when it starts): OBS's own log says which device it opened.
+async function obsStartedAfterSetup() {
+  try { const { device } = await appFetch('/obs/monitoring'); return /CABLE Input/i.test(device); } catch { return false; }
+}
+async function zoomSoundAfterRestart() {
+  if (!isMain || !inApp) return;
+  try {
+    const { inputs } = await call('GetInputList');
+    if (!inputs.some(i => i.inputName === ZS_INPUT)) return;
+    const { monitorType } = await call('GetInputAudioMonitorType', { inputName: ZS_INPUT });
+    if (monitorType === 'OBS_MONITORING_TYPE_NONE' && await obsStartedAfterSetup()) {
+      await call('SetInputAudioMonitorType', { inputName: ZS_INPUT, monitorType: 'OBS_MONITORING_TYPE_MONITOR_ONLY' });
+      toast('Levelled sound now going to Zoom');
+    }
+  } catch {}
+}
+
+// In every scene, so it plays whatever is on air (new scenes too).
+async function zoomSoundInAllScenes() {
+  const { scenes } = await call('GetSceneList');
+  for (const sc of scenes) {
+    const { sceneItems } = await call('GetSceneItemList', { sceneName: sc.sceneName });
+    if (!sceneItems.some(it => it.sourceName === ZS_INPUT))
+      await call('CreateSceneItem', { sceneName: sc.sceneName, sourceName: ZS_INPUT }).catch(() => {});
+  }
+}
+
+$('zsSetup').onclick = () => { $('zsSetup').disabled = true; setupZoomSound().catch(showError).finally(() => { $('zsSetup').disabled = false; }); };
+$('zsRemove').onclick = () => {
+  if (!confirm('Stop sending levelled sound to Zoom? (Set Zoom’s microphone back to the sound desk feed.)')) return;
+  call('RemoveInput', { inputName: ZS_INPUT }).then(() => { toast('Levelled sound for Zoom turned off'); renderZoomSound(); }).catch(showError);
+};
+
+// ---------------------------------------------------------------------------
 // Sound: Windows' volume (the speakers), and Zoom's and JW Library's own as in Windows' Volume
 // mixer, each with a level meter. The app does it, so only on the PC.
 // ---------------------------------------------------------------------------
-const MIX = ['system', 'zoom', 'jw'];
+const MIX = ['system', 'zoom', 'jw', 'mic'];
 const mixDragging = {};   // target -> true while its slider is held, so the readings don't move it
 let mixSeenAt = 0;        // when the last readings arrived
 let tabletsWantSound = 0; // on the PC: until when a tablet has its Sound page open
@@ -1408,14 +1573,38 @@ function renderMix(a) {
     row.classList.toggle('muted', !!s && s.mute);
     range.disabled = btn.disabled = !s;
     btn.classList.toggle('muted', !!s && s.mute);
-    btn.innerHTML = icon(s && s.mute ? 'volumeX' : 'volume');
+    btn.innerHTML = t === 'mic' ? icon(s && s.mute ? 'micOff' : 'mic') : icon(s && s.mute ? 'volumeX' : 'volume');
     btn.title = s && s.mute ? 'Unmute' : 'Mute';
     row.querySelector('.meter span').style.width = s && !s.mute ? Math.min(100, Math.sqrt(s.peak) * 100) + '%' : '0';
-    if (!s) { row.querySelector('.val').textContent = t === 'system' ? 'No speakers' : 'Silent'; return; }
+    if (!s) { row.querySelector('.val').textContent = t === 'system' ? 'No speakers' : t === 'mic' ? 'No mic' : 'Silent'; return; }
     if (!mixDragging[t]) { range.value = Math.round(s.vol * 100); range.style.setProperty('--v', range.value + '%'); }
     row.querySelector('.val').textContent = s.mute ? 'Muted' : range.value + '%';
   });
+  // To Zoom: the level arriving at Zoom through VB-CABLE, as a bar in decibels (-60 to 0 dB);
+  // the dashed band (-27 to -12 dB) is right for speech.
+  document.querySelectorAll('.toZoom').forEach(row => {
+    row.hidden = a.toZoom == null;
+    if (a.toZoom == null) return;
+    const db = a.toZoom > 0 ? 20 * Math.log10(a.toZoom) : -60;
+    const bar = row.querySelector('.bar span');
+    bar.style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
+    bar.className = db > -3 ? 'hot' : db < -40 ? 'quiet' : '';
+    row.querySelector('.val').textContent = db <= -59 ? 'silent' : Math.round(db) + ' dB';
+    row.querySelector('.ico').innerHTML = icon('video');
+  });
+  // Hold microphone steady: on while the app keeps it at a level.
+  document.querySelectorAll('.micHold').forEach(b => {
+    b.hidden = !a.mic;
+    b.classList.toggle('on', a.micHold != null);
+    b.setAttribute('aria-checked', a.micHold != null);
+  });
 }
+document.querySelectorAll('.micHold').forEach(b => b.onclick = () => {
+  const on = !b.classList.contains('on');
+  if (inApp) appFetch('/audio/hold?on=' + (on ? 1 : 0)).then(renderMix).catch(showError);
+  else if (connected) call('BroadcastCustomEvent', { eventData: { meetingCameraMicHold: on } }).catch(() => {});
+  toast(on ? 'Microphone held at this level' : 'Microphone free to change');
+});
 
 // The app on the PC sets the sound. A tablet can't reach it, so it asks the PC through OBS.
 function setAudio(target, change) {
@@ -1429,6 +1618,7 @@ function onAudioEvent(e) {
     const { target, vol, mute } = e.meetingCameraAudioSet;
     if (MIX.includes(target)) setAudio(target, vol != null ? { vol: Math.round(+vol) } : { mute: mute ? 1 : 0 });
   }
+  if (inApp && e.meetingCameraMicHold != null) appFetch('/audio/hold?on=' + (e.meetingCameraMicHold ? 1 : 0)).then(renderMix).catch(() => {});
   if (!inApp && e.meetingCameraAudio) renderMix(e.meetingCameraAudio);
 }
 
@@ -2384,8 +2574,13 @@ const track = {
   splitA: +store.get('splitA', 33), splitB: +store.get('splitB', 67), floor: +store.get('floor', 100),
   readerLine: +store.get('readerLine', 0),   // in the table area, a head above this is someone standing (0 = off)
   model: null, loading: null, status: '', error: '',
-  img: null, people: [], want: null, wantCount: 0, lastSwitchAt: 0, offByPick: false,
+  img: null, people: [], want: null, wantSince: 0, lastSwitchAt: 0, offByPick: false,
+  seen: [],   // the areas people were in, over the last few looks (newest last)
 };
+// Looked twice a second. An area counts as occupied when someone was in it in at least 3 of the last
+// 4 looks, so one missed or stray detection changes nothing. A new shot is cut to once it has been
+// wanted for 1.5 seconds, and a shot stays on air for at least 4.
+const TRACK = { everyMs: 500, history: 4, needed: 3, steadyMs: 1500, minOnAirMs: 4000, minScore: 0.4, minHeight: 0.06 };
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -2425,17 +2620,24 @@ function zoneOf(p) {
 const standing = p => track.readerLine > 0 && p.y * 100 < track.readerLine;
 
 function decideTrack() {
-  const zones = new Set(track.people.map(zoneOf).filter(Boolean));
-  let want = zones.size === 0 ? null : zones.size === 1 ? [...zones][0] : 'wide';
-  // The reader stands to read and sits otherwise; anyone standing at the table means Reader.
-  if (want === 'table' && layout().bySlot.reader && track.people.some(p => zoneOf(p) === 'table' && standing(p))) want = 'reader';
+  // This look's areas (a standing reader at the table counts as 'reader'), added to the history.
+  const now = new Set();
+  track.people.forEach(p => {
+    const z = zoneOf(p);
+    if (z) now.add(z === 'table' && standing(p) && layout().bySlot.reader ? 'reader' : z);
+  });
+  track.seen.push(now);
+  if (track.seen.length > TRACK.history) track.seen.shift();
+  const steady = ['demo', 'speaker', 'table', 'reader'].filter(z => track.seen.filter(s => s.has(z)).length >= TRACK.needed);
+  // Table and Reader are the same place: standing wins.
+  const areas = steady.includes('reader') ? steady.filter(z => z !== 'table') : steady;
+  let want = areas.length === 0 ? null : areas.length === 1 ? areas[0] : 'wide';
   // During the Watchtower Study or the Congregation Bible Study, the conductor and reader share one shot.
   if (want && studyRunning() && layout().bySlot.spkrdr) want = 'spkrdr';
-  if (want !== track.want) { track.want = want; track.wantCount = 0; }
-  track.wantCount++;
+  if (want !== track.want) { track.want = want; track.wantSince = Date.now(); }
 
   if (!want || trackPausedBy()) return;
-  if (track.wantCount < 3 || Date.now() - track.lastSwitchAt < 5000) return;
+  if (Date.now() - track.wantSince < TRACK.steadyMs || Date.now() - track.lastSwitchAt < TRACK.minOnAirMs) return;
   const target = layout().bySlot[want];
   if (!target || target === state.current) return;
   track.lastSwitchAt = Date.now();
@@ -2445,6 +2647,9 @@ function decideTrack() {
 function trackPausedBy() {
   if (auto.autoScene) return 'media';
   if (state.current && state.current === layout().bySlot.holding) return 'holding';
+  // Monitor on air in the 2 hours before a meeting: that's the holding screen.
+  const m = nextMeeting(), left = m ? m.at - Date.now() : -1;
+  if (state.current && state.current === layout().bySlot.monitor && left > 0 && left < 2 * 3600e3) return 'holding';
   return null;
 }
 
@@ -2501,13 +2706,17 @@ function renderTrack() {
   else if (track.error) view = ['help', 'Detector problem', track.error];
   else if (!track.model) view = ['scan', 'Starting…', 'Loading the person detector (first time takes a few seconds)'];
   else if (paused === 'media') view = ['image', 'Paused', 'JW Library media is on screen'];
-  else if (paused === 'holding') view = ['clock', 'Paused', 'Holding screen is on'];
+  else if (paused === 'holding') view = ['clock', 'Paused', 'Waiting for the meeting to start'];
   else if (!track.want) view = ['scan', 'Nobody detected', 'Keeping the current shot'];
-  else view = [SLOTS[track.want].icon, SLOTS[track.want].title, `${n} ${n === 1 ? 'person' : 'people'} on platform`];
+  else {
+    const target = layout().bySlot[track.want];
+    const going = target && target !== state.current;
+    view = [SLOTS[track.want].icon, (going ? '→ ' : '') + SLOTS[track.want].title, `${n} ${n === 1 ? 'person' : 'people'} on platform`];
+  }
 
   // Next to the tick: what it's doing, in a word or two (the reason when hovered).
   $('trackStatus').textContent = !track.on ? (track.offByPick ? 'off — you picked a shot' : '')
-    : paused === 'media' ? 'paused — media' : paused === 'holding' ? 'paused — holding screen' : view[1];
+    : paused === 'media' ? 'paused — media' : paused === 'holding' ? 'paused — before the meeting' : view[1];
   $('trackTick').title = 'Auto camera: follows people on the platform. ' + view[2];
 
   $('splitAVal').textContent = track.splitA + '%';
@@ -2526,7 +2735,7 @@ function renderTrackRules() {
 
 function setTrackSrc(name) {
   track.src = name;
-  track.img = null; track.people = []; track.want = null;
+  track.img = null; track.people = []; track.want = null; track.seen = [];
   store.set('trackSrc', name);
   drawTrack(); renderTrack();
 }
@@ -2536,7 +2745,7 @@ $('trackSrc').onchange = e => setTrackSrc(e.target.value);
 // the screen for JW Library media). Picking a shot yourself turns Auto camera off, not media.
 function setFollow(on, byPick = false) {
   track.on = on;
-  track.offByPick = byPick && !on; track.error = '';
+  track.offByPick = byPick && !on; track.error = ''; track.seen = []; track.want = null;
   store.set('trackOn', on ? '1' : '0');
   renderTrack();
 }
@@ -2564,9 +2773,41 @@ $('mediaChk').onchange = () => { setMedia($('mediaChk').checked); toast($('media
   };
 });
 
+// The lines can be dragged on the picture too: the two area edges sideways, the "ignore below" and
+// reader lines up and down (grabbed at the bottom edge, or the top of the table area, while off).
+{
+  const c = $('trackCanvas');
+  const at = e => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * 100, (e.clientY - r.top) / r.height * 100]; };
+  const near = (a, b, r) => Math.abs(a - b) < 3 * 100 / r;   // within about 12 screen pixels
+  const grab = e => {
+    const [x, y] = at(e), r = c.getBoundingClientRect();
+    if (near(x, track.splitA, r.width)) return 'splitA';
+    if (near(x, track.splitB, r.width)) return 'splitB';
+    if (x > track.splitB && near(y, track.readerLine > 0 ? track.readerLine : 0, r.height)) return 'readerLine';
+    if (near(y, track.floor, r.height)) return 'floor';
+    return null;
+  };
+  let dragging = null;
+  const setLine = (id, v) => {
+    const el = $(id);
+    el.value = Math.round(Math.min(+el.max, Math.max(+el.min, v)));
+    el.oninput();
+  };
+  c.onpointerdown = e => { dragging = grab(e); if (dragging) { c.setPointerCapture(e.pointerId); e.preventDefault(); } };
+  c.onpointermove = e => {
+    if (!dragging) { const g = grab(e); c.style.cursor = !g ? '' : g.startsWith('split') ? 'ew-resize' : 'ns-resize'; return; }
+    const [x, y] = at(e);
+    setLine(dragging, dragging.startsWith('split') ? x : y);
+  };
+  c.onpointerup = c.onpointercancel = () => { dragging = null; };
+  c.style.touchAction = 'none';
+}
+
 let trackBusy = false;
-everyMs(1000, async () => {
-  if (!isMain || !connected || !track.on || !track.src || trackBusy) return;
+everyMs(TRACK.everyMs, async () => {
+  // Following, or the Follow people picture on screen (so the lines can be set while it's off).
+  const shown = $('trackCanvas').offsetParent && !document.hidden;
+  if (!isMain || !connected || !(track.on || shown) || !track.src || trackBusy) return;
   trackBusy = true;
   try {
     if (!track.model) { renderTrack(); track.model = await loadModel(); }
@@ -2574,12 +2815,13 @@ everyMs(1000, async () => {
       sourceName: track.src, imageFormat: 'jpg', imageWidth: 640, imageCompressionQuality: 70,
     });
     const img = await loadImage(imageData);
-    const found = await track.model.detect(img, 20, 0.5);
+    const found = await track.model.detect(img, 20, TRACK.minScore);
     track.img = img;
-    track.people = found.filter(f => f.class === 'person').map(({ bbox: [x, y, w, h] }) =>
+    // People, not tiny shapes far off (a picture on the wall, a head at the back).
+    track.people = found.filter(f => f.class === 'person' && f.bbox[3] / img.height >= TRACK.minHeight).map(({ bbox: [x, y, w, h] }) =>
       ({ x: x / img.width, y: y / img.height, w: w / img.width, h: h / img.height }));
     track.error = '';
-    decideTrack();
+    if (track.on) decideTrack();
   } catch (err) {
     track.error = track.model ? err.message
       : LIB ? 'Could not load the person detector: ' + err.message
@@ -2721,14 +2963,16 @@ async function showHolding() {
   } catch (err) { showError(err); }
 }
 
-// The app opens on the holding screen - unless a meeting is under way, so the page reloading
-// mid-meeting doesn't cut away from it.
+// The app opens on Monitor, the shot for before the meeting - JW Library's screen, with the yeartext
+// and, in the last 5 minutes, the countdown (a holding screen if there's no Monitor). Not
+// when a meeting is under way, so the page reloading mid-meeting doesn't cut away.
 let holdOnStart = inApp;
+const beforeShot = () => layout().bySlot.monitor || layout().bySlot.holding;
 function holdingOnStart() {
   if (!holdOnStart) return;
   holdOnStart = false;
   const m = nextMeeting();
-  if (!(m && m.at <= Date.now())) showHolding();
+  if (!(m && m.at <= Date.now()) && beforeShot()) switchScene(beforeShot());
 }
 $('autoStartChk').onchange = () => {
   sched.autoStart = $('autoStartChk').checked;
@@ -3138,18 +3382,19 @@ async function renderRemoteBox() {
 // A few sections, each listing its parts with a heading and a sentence on what it's for.
 // openSettings takes a section or one part of it, which it scrolls to.
 const SETTINGS = {
-  meeting: [['times', 'Meeting times', 'When the meetings start: for the holding screen’s countdown and auto-start.'],
+  meeting: [['times', 'Meeting times', 'When the meetings start: for the countdown and auto-start.'],
             ['timer', 'Timer screen', 'Where the speakers see how long they have left.']],
   shots:   [['switching', 'Shot changes', 'How the picture goes from one shot to the next.'],
             ['jw', 'JW Library media', 'Auto media: a picture or video in JW Library cuts to the screen, and back.'],
             ['track', 'Follow people', 'Auto camera: picks the shot by where people are on the platform.'],
             ['layers', 'Layers', 'Turn parts of the shot that’s on air on or off.']],
+  sound:   [['zoomsound', 'Sound to Zoom', 'The sound desk’s feed, levelled for Zoom: every mic and song at the same volume.']],
   links:   [['connection', 'OBS', 'How Meeting AV reaches OBS.'],
             ['tablet', 'Tablet or phone', 'Run it from a tablet on the hall Wi-Fi.']],
   pc:      [['look', 'Look', 'Light, dark or dim, and how much fits on the screen. Each PC and tablet keeps its own.'],
             ['app', 'Meeting AV', 'Starting with Windows, updates, and moving to another PC.']],
 };
-const MAIN_PANES = ['timer', 'switching', 'jw', 'track', 'tablet', 'app'];   // only on the meeting PC
+const MAIN_PANES = ['timer', 'switching', 'jw', 'track', 'tablet', 'app', 'zoomsound'];   // only on the meeting PC
 const paneShown = name => isMain || !MAIN_PANES.includes(name);
 const sectionOf = name => SETTINGS[name] ? name : Object.keys(SETTINGS).find(k => SETTINGS[k].some(p => p[0] === name));
 {
@@ -3182,6 +3427,7 @@ function openSettings(tab = settingsTab) {
   else body.scrollTop = 0;
   if (names.includes('tablet')) renderRemoteBox();
   if (names.includes('timer')) renderTimerScreens();
+  if (names.includes('zoomsound')) renderZoomSound();
   if (names.includes('app')) appFetch('/app').then(renderApp).catch(() => {});
   if (names.includes('track')) drawTrack();
 }
@@ -3207,7 +3453,7 @@ const GUIDE = [
     text: 'Each shot is a scene in OBS. Meeting AV finds them by their names, so name each scene with the words below.',
     body: shotsGuide },
   { title: 'Meeting times',
-    text: 'When your meetings are. The holding screen counts down to them, and the timer gets each week’s parts.',
+    text: 'When your meetings are. Before each one Zoom sees JW Library’s screen, which counts down in the last 5 minutes, and the timer gets each week’s parts.',
     pane: 'times' },
   { title: 'JW Library',
     text: 'Open JW Library with Second display on (in JW Library’s Settings). When it shows a picture or video, ' +
@@ -3328,7 +3574,7 @@ addHelp('header h1', 'The picture on the left is what Zoom sees. Pick shots on t
 addHelp('.timerIco', 'The meeting’s parts are along the bottom. Press Start as the first speaker begins; Stop gets ' +
         'the next part ready. The speakers’ screen shows the time left: green, amber in the last minute, red when over.');
 addHelp('.side:last-child .panelHead h2', 'Click a shot to put it on air, or press its number key. What’s on air is ' +
-        'what Zoom sees. The holding screen counts down to the meeting.', true);
+        'what Zoom sees. Before the meeting, Monitor shows JW Library’s screen, with the countdown in the last 5 minutes.', true);
 addHelp('#trackTick', 'Auto camera watches the platform and picks the shot: the speaker, the demonstration, the table, ' +
         'or the whole platform. Picking a shot yourself turns it off; tick it again to let it take over.', true);
 addHelp('#mediaTick', 'Auto media: when JW Library shows a picture, the camera cuts to Speaker + Monitor; a video or ' +

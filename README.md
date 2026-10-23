@@ -27,7 +27,8 @@ From half an hour before each meeting, a bar at the top says **Ready** - or
 what to sort out, with a button to fix it where Meeting AV can. Tap **?** next
 to anything for a quick explanation.
 
-Meeting AV opens on the holding screen, with a countdown to the meeting. It
+Meeting AV opens on **Monitor**: Zoom sees JW Library's screen (the yeartext, and the
+5-minute countdown before the meeting). It
 starts with Windows and keeps itself up to date from this repository: when a
 newer `MeetingAV.exe` is committed, it downloads it and a **Restart to update**
 button appears (both can be switched off under Settings → This PC).
@@ -49,10 +50,10 @@ Shots are found by their scene names in OBS (not case-sensitive):
 | Speaker + Monitor | `speaker` and `monitor`      |
 | Speaker + Reader (optional) | `speaker` and `reader` |
 | Monitor           | `monitor` or `screen`        |
-| Holding screen    | `holding`, `countdown`, `waiting` or `welcome` |
+| Holding screen (optional) | `holding`, `countdown`, `waiting` or `welcome` |
 
-Any other scenes appear under **Other scenes**. If there's no holding screen,
-Meeting AV makes one.
+Any other scenes appear under **Other scenes**. A holding screen isn't needed:
+Monitor is the shot before the meeting.
 
 ## During the meeting
 
@@ -63,11 +64,12 @@ Meeting AV makes one.
 - **Auto media** (a tick on the shots): a JW Library picture cuts to
   *Speaker + Monitor*, a video or song to *Monitor*, and closing it goes back to
   the previous shot. `A` ticks or unticks it.
-- **Auto camera** (a tick on the shots): follows people, switching between
+- **Auto camera** (a tick on the shots): looks twice a second and cuts once a
+  new shot has held for about 1.5 seconds (at least 4 seconds on each). It follows people, switching between
   Demonstrations, Speaker, Table and Platform wide depending on where they stand
   on the platform. Picking a shot yourself unticks it. With a Reader
   scene, someone standing at the table cuts to Reader and someone sitting to
-  Table: under Settings → Shots → *Follow people*, set the reader line between a seated
+  Table: under Settings → Shots → *Follow people* (drag the lines on the picture), set the reader line between a seated
   head and a standing one.
 - **Which meeting:** Saturday and Sunday it's the weekend meeting (its times, its
   parts, its countdown, its media in JW Library), Monday to Friday the midweek one.
@@ -80,8 +82,8 @@ Meeting AV makes one.
   it are left alone.
 - **Meeting media** and **Playlists** (by the Auto ticks): open this week's
   meeting in JW Library, on its pictures and videos, or JW Library's playlists.
-- **Auto-start:** at the meeting time, turns the camera on and cuts from the
-  holding screen to Speaker. Set the times under *Change times*.
+- **Auto-start:** at the meeting time, turns the camera on and cuts to
+  Speaker. Set the times under *Change times*.
 - **Shot changes:** a shot you pick cuts straight away; when Meeting AV changes
   the shot by itself it fades (a third of a second). Settings → Shots switches the
   fade off.
@@ -105,6 +107,15 @@ Meeting AV makes one.
   first part, the speakers see the time of day; switch **Screen** on to show it, and pick which screen under
   Settings → Meeting. In the grid view, a fourth page (swipe left past Sound)
   controls it from a tablet.
+- **Sound:** speakers, Zoom, JW Library and the **microphone** (Windows' default
+  recording device), each with a volume, mute and level meter. **Hold microphone
+  steady** keeps it at its level: if Zoom or Windows turns it up or down, Meeting AV
+  puts it back within half a second (it stays held after a restart).
+- **Sound to Zoom** (Settings → Sound): OBS takes the hall mixer's feed, levels it
+  (quiet readers lifted, loud speakers and songs held back, a limiter so it never
+  clips) and plays it into **VB-CABLE** (free, vb-audio.com), which Zoom uses as its
+  microphone ("CABLE Output"). The hall speakers aren't affected. A **To Zoom** meter
+  in Sound shows what participants hear. Turn off Zoom's automatic microphone volume.
 - **Zoom muted:** 30 seconds before the start, Meeting AV clicks **Mute all** in
   Zoom's Participants panel, unticks "Allow participants to unmute themselves" and
   confirms: everyone but you is muted and can't unmute themselves. It moves the
