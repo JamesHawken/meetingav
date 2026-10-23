@@ -85,13 +85,19 @@
   /* Everything needed during the meeting fits on one screen: the picture, and the shots beside it with
      the sound under them. On a wide screen the picture takes what the window's height allows. */
   .top { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start; }
-  @media (min-width: 1100px) {
+  /* Side by side on a wide, landscape window; one column (picture, then shots, then sound) on a
+     narrower or upright one. */
+  @media (min-width: 1100px) and (min-aspect-ratio: 1/1) {
     main { max-width: 1760px; }
     .top { grid-template-columns: minmax(0, 1fr) clamp(400px, 40%, 680px); }
     .top .preview, .top .camBtn { width: min(100%, var(--picW, 100%)); min-width: 480px; margin-left: auto; margin-right: auto; }
   }
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 16px; }
-  @media (max-width: 900px) { .top, .cards { grid-template-columns: 1fr; } }
+  @media (max-width: 1099px), (max-aspect-ratio: 1/1) {
+    .top, .cards { grid-template-columns: 1fr; }
+    /* As big as the window allows with the shots still in view under it. */
+    .top .preview, .top .camBtn { max-width: max(320px, var(--picW, 100%)); margin-left: auto; margin-right: auto; }
+  }
   .cards .panel { display: flex; flex-direction: column; }
   .cards .link { margin-top: auto; padding-top: 10px; align-self: flex-start; }
   .panelHead .hint { font-size: 12px; color: var(--muted); }
@@ -359,6 +365,8 @@
   .timerTop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .timerIco { color: var(--muted); display: grid; }
   .timerTime { flex: 1; min-width: 150px; }
+  /* The timer's buttons stay together: beside the time, or all on the next line. */
+  .timerBtns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
   .timerBig { font-size: 34px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; color: var(--muted); }
   .timerBig.ok { color: var(--ok); } .timerBig.warn { color: var(--warn); } .timerBig.over { color: var(--live); }
   .timerBig.paused { opacity: .55; }
@@ -578,6 +586,7 @@
     <div class="timerTop">
       <span class="timerIco"><i data-icon="timer"></i></span>
       <div class="timerTime"><div class="timerBig" id="timerBig">—</div><div class="timerLabel" id="timerLabel"></div><div class="timerNext" id="timerNext"></div></div>
+      <div class="timerBtns">
       <button id="timerStart" class="timerGo"></button>
       <button id="timerMinus" title="One minute less">−1</button>
       <button id="timerPlus" title="One minute more">+1</button>
@@ -588,6 +597,7 @@
       </span>
       <button id="jwBackBtn" hidden title="The TV shows the countdown until the start; this gives JW Library its screen back now">JW Library on the TV</button>
       <button class="toggle" id="timerScreenBtn" role="switch" title="Show the timer on a screen the speakers can see (Settings → Meeting picks which)">Screen<span class="switch"></span></button>
+      </div>
     </div>
     <div class="timerParts" id="timerParts"></div>
   </section>
@@ -1309,9 +1319,13 @@ function toggleCam() { call(state.camOn ? 'StopVirtualCam' : 'StartVirtualCam').
 function fitPicture() {
   // Measured in screen pixels; Settings → This PC → Size scales the page's own.
   const zoom = +document.documentElement.style.zoom || 1;
-  const top = document.querySelector('.top').getBoundingClientRect().top + scrollY;
-  const below = (($('camBtn').hidden ? 0 : 76) + 56) * zoom;   // the camera button, the panel's padding, the page's margin
-  const h = Math.max(270 * zoom, innerHeight - top - below);
+  const topEl = document.querySelector('.top');
+  const top = topEl.getBoundingClientRect().top + scrollY;
+  let below = (($('camBtn').hidden ? 0 : 76) + 56) * zoom;   // the camera button, the panel's padding, the page's margin
+  // One column: the shots come under the picture, so they need room too.
+  if (getComputedStyle(topEl).gridTemplateColumns.trim().split(/\s+/).length === 1)
+    below += document.querySelector('.side:last-child > section').getBoundingClientRect().height + 16 * zoom;
+  const h = Math.max(200 * zoom, innerHeight - top - below);
   document.documentElement.style.setProperty('--picW', Math.round(h * 16 / 9 / zoom) + 'px');
 }
 addEventListener('resize', fitPicture);
@@ -2518,6 +2532,25 @@ everyMs(1000, async () => {
     renderTrack();
   }
 });
+
+// The Follow people picture: smooth (about 10 a second) while it's on screen, in Settings or the
+// setup guide. People are still looked for once a second, above; their boxes stay drawn in between.
+(async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  for (;;) {
+    const started = performance.now(), c = $('trackCanvas');
+    if (isMain && connected && track.src && c.offsetParent && !document.hidden) {
+      try {
+        const { imageData } = await call('GetSourceScreenshot', {
+          sourceName: track.src, imageFormat: 'jpg', imageWidth: 640, imageCompressionQuality: 70,
+        });
+        track.img = await loadImage(imageData);
+        drawTrack();
+      } catch {}
+      await sleep(Math.max(20, 100 - (performance.now() - started)));
+    } else await sleep(300);
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // Meeting times, holding-screen countdown and auto-start.
