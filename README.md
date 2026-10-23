@@ -105,6 +105,13 @@ Meeting AV makes one.
   first part, the speakers see the time of day; switch **Screen** on to show it, and pick which screen under
   Settings → Meeting. In the grid view, a fourth page (swipe left past Sound)
   controls it from a tablet.
+- **Zoom muted:** 30 seconds before the start, Meeting AV clicks **Mute all** in
+  Zoom's Participants panel, unticks "Allow participants to unmute themselves" and
+  confirms: everyone but you is muted and can't unmute themselves. It moves the
+  mouse for a moment, then puts it back. You need to be host or co-host.
+  **Zoom mics: Muted | Can unmute** (by the shots) does the same at any time, or
+  lets everyone unmute themselves again (nobody is unmuted for them).
+  Settings → Meeting switches it off.
 - **Countdown:** in the last 5 minutes before the meeting, the speakers' screen
   and JW Library's screen (the hall TV) show "Meeting starts in 4:59…". For it,
   Meeting AV switches JW Library's second display off, and back on as it reaches

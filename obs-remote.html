@@ -341,22 +341,23 @@
   .autoTick input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex: none; }
   /* JW Library's meeting media and playlists: two small buttons in the Shots heading (where the
      app has them, the tiles' numbers say the keys). */
-  .jwBtns { display: flex; flex-wrap: wrap; gap: 6px; }
-  .jwMedia { white-space: nowrap; }
-  .panelHead:has(.jwBtns) { flex-wrap: wrap; }
-  .panelHead:has(.jwBtns button:not([hidden])) #shotsHint { display: none; }
-  .jwMedia { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 13px; font-weight: 600; border-radius: 8px; }
-  .jwMedia svg.i { width: 15px; height: 15px; }
-  /* Hall TV: JW Library | Zoom - the one on the TV is filled in. */
-  .tvPick { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; background: var(--btn); white-space: nowrap; }
-  .tvPick .tvLabel { display: flex; align-items: center; gap: 6px; padding: 0 8px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
-  .tvPick .tvLabel svg.i { width: 15px; height: 15px; }
-  .tvPick button { padding: 4px 10px; font-size: 13px; font-weight: 600; border-radius: 7px; background: none; color: var(--muted); }
-  .tvPick button:hover { background: var(--btn-hover); color: var(--text); }
-  .tvPick button[aria-pressed="true"] { background: var(--accent); color: #fff; cursor: default; }
-  .tvPick button.going { background: var(--btn-hover); color: var(--text); }
-  body.touch .tvPick button { padding: 8px 14px; font-size: 15px; }
-  body.touch .jwMedia { padding: 10px 14px; font-size: 15px; }
+  .ctrlRows { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; margin: -2px 0 14px; }
+  .ctrlRow { display: contents; }
+  .ctrlLabel { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  .ctrlLabel svg.i { width: 16px; height: 16px; }
+  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3px; padding: 3px; border-radius: 10px; background: var(--btn); }
+  .seg button { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 10px; font-size: 14px; font-weight: 600;
+                border-radius: 7px; background: none; white-space: nowrap; min-width: 0; }
+  .seg button svg.i { width: 16px; height: 16px; flex: none; }
+  .seg button:hover { background: var(--btn-hover); }
+  .seg button:disabled { opacity: .5; }
+  .seg.pick button { color: var(--muted); }
+  .seg.pick button:hover { color: var(--text); }
+  .seg.pick button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  #tvPick button[aria-pressed="true"] { cursor: default; }
+  .seg.pick button.going { background: var(--btn-hover); color: var(--text); }
+  .seg.pick button.going::after { content: "…"; }
+  body.touch .seg button { padding: 12px 14px; font-size: 16px; }
   .tickStatus { font-weight: 400; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
   .tickStatus:not(:empty)::before { content: "· "; }
   .tickStatus:empty { display: none; }
@@ -618,16 +619,32 @@
         <div class="panelHead">
           <h2><i data-icon="film"></i>Shots</h2>
           <span class="hint" id="shotsHint"></span>
-          <span class="jwBtns">
-            <button id="jwMediaBtn" class="jwMedia" hidden title="JW Library: this week's meeting, its pictures and videos"><i data-icon="image"></i>Meeting media</button>
-            <button id="jwPlaylistsBtn" class="jwMedia" hidden title="JW Library: your playlists"><i data-icon="list"></i>Playlists</button>
-            <span class="tvPick" id="tvPick" hidden title="What the hall's TV shows: JW Library's screen, or Zoom's second window (everyone in the meeting)">
-              <span class="tvLabel"><i data-icon="monitor"></i>Hall TV</span>
+
+        </div>
+        <!-- JW Library, the hall TV and Zoom's mics: a labelled row each, the buttons sharing the width.
+             In a two-way switch the side that's on is filled in. -->
+        <div class="ctrlRows" id="ctrlRows" hidden>
+          <div class="ctrlRow">
+            <span class="ctrlLabel"><i data-icon="film"></i>JW Library</span>
+            <span class="seg">
+              <button id="jwMediaBtn" title="Open this week's meeting, on its pictures and videos"><i data-icon="image"></i>Meeting media</button>
+              <button id="jwPlaylistsBtn" title="Open your playlists"><i data-icon="list"></i>Playlists</button>
+            </span>
+          </div>
+          <div class="ctrlRow">
+            <span class="ctrlLabel"><i data-icon="monitor"></i>Hall TV</span>
+            <span class="seg pick" id="tvPick" title="What the hall's TV shows: JW Library's screen, or Zoom's second window (everyone in the meeting)">
               <button data-tv="jw" aria-pressed="true">JW Library</button>
               <button data-tv="zoom" aria-pressed="false">Zoom</button>
             </span>
-          </span>
-
+          </div>
+          <div class="ctrlRow">
+            <span class="ctrlLabel"><i data-icon="mic"></i>Zoom mics</span>
+            <span class="seg pick" id="micPick" title="Everyone in Zoom but you: muted and unable to unmute, or free to unmute themselves (nobody is unmuted for them). You need to be host or co-host.">
+              <button data-mics="muted" aria-pressed="false"><i data-icon="micOff"></i>Muted</button>
+              <button data-mics="open" aria-pressed="false"><i data-icon="mic"></i>Can unmute</button>
+            </span>
+          </div>
         </div>
         <div class="autoRow">
           <label class="autoTick" id="trackTick" title="Follow people: switch shots by where people are on the platform (Settings → Shots)">
@@ -824,6 +841,8 @@
           <select id="timerScreen"></select></label>
         <label class="tick"><input type="checkbox" id="jwCountdown"> Before the meeting, show a 5-minute countdown on
           JW Library’s screen (the TV)</label>
+        <label class="tick"><input type="checkbox" id="zoomMute"> 30 seconds before the start, mute everyone in Zoom
+          except you, and stop them unmuting themselves (you need to be host or co-host)</label>
         <p class="help" style="margin:0">For the countdown, Meeting AV switches JW Library’s second display off, and
           back on as it reaches 0:00, leaving JW Library on the meeting’s media. Pictures and videos
           reach the TV again once it’s back; <b>JW Library on the TV</b> by the timer gives it back sooner.</p>
@@ -895,6 +914,7 @@ const ICONS = {
   book: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5v-2z"/><path d="M8 7h8M8 11h6"/>',
   download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
   more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+  micOff: '<path d="m2 2 20 20"/><path d="M18.9 15.3A7 7 0 0 0 19 12v-2"/><path d="M15 9.3V5a3 3 0 0 0-5.7-1.3"/><path d="M9 9v3a3 3 0 0 0 5.1 2.1"/><path d="M5 10v2a7 7 0 0 0 11.6 5.3"/><path d="M12 19v3"/>',
   columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/><path d="M12 12h9"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   list: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="m3 6 1 1 2-2"/><path d="m3 12 1 1 2-2"/><path d="m3 18 1 1 2-2"/>',
@@ -1666,7 +1686,32 @@ if (inApp) {
     btns.forEach(b => { b.disabled = false; });
     if (!r || !r.busy) toast(r && r.ok ? done : 'JW Library isn’t open');
   };
-  $('jwMediaBtn').hidden = $('jwPlaylistsBtn').hidden = $('tvPick').hidden = false;
+  $('ctrlRows').hidden = false;
+  // Zoom mics: everyone but you muted and unable to unmute, or free to unmute themselves (nobody is
+  // unmuted for them). The state Meeting AV last left is filled in; the 30-second mute sets it too.
+  const micBtns = [...document.querySelectorAll('#micPick button')];
+  let micGoing = '';
+  const showMics = m => micBtns.forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.mics === m);
+    b.classList.toggle('going', b.dataset.mics === micGoing);
+  });
+  micBtns.forEach(b => b.onclick = async () => {
+    const want = b.dataset.mics;
+    if (micGoing) return;
+    micGoing = want;
+    showMics(timer && timer.zoomMics);
+    window.mutedByButtonAt = Date.now();   // this note, not the automatic one's as well
+    toast(want === 'muted' ? 'Muting everyone in Zoom…' : 'Letting everyone unmute themselves in Zoom…');
+    const r = await appFetch(want === 'muted' ? '/zoom/mute' : '/zoom/allow-unmute').catch(() => null);
+    micGoing = '';
+    if (r && timer) timer.zoomMics = r.mics;
+    showMics(r ? r.mics : timer && timer.zoomMics);
+    if (!r) return toast('Couldn’t reach Zoom');
+    toast(want === 'muted'
+      ? (r.result.startsWith('muted') ? 'Zoom: everyone muted' + (r.result.includes('not allowed') ? ', and can’t unmute themselves' : '') : 'Couldn’t mute Zoom — ' + r.result)
+      : (r.result === 'allowed' ? 'Zoom: everyone can unmute themselves' : 'Zoom: ' + r.result));
+  });
+  everyMs(1000, () => { if (timer && !micGoing) showMics(timer.zoomMics); });
   // The hall's TV: JW Library's screen, or Zoom's second window that sits under it. Pick one;
   // the one showing is filled in.
   const tvBtns = [...document.querySelectorAll('#tvPick button')];
@@ -1714,10 +1759,23 @@ if (inApp) {
   // The app is told when the next meeting starts, for the timer screen's countdown.
   const tellMeeting = () => {
     const m = nextMeeting();
-    appFetch(`/timer/meeting?at=${m ? +m.at : 0}&countdown=${store.get('jwCountdown', '1')}`).catch(() => {});
+    appFetch(`/timer/meeting?at=${m ? +m.at : 0}&countdown=${store.get('jwCountdown', '1')}&mute=${store.get('zoomMute', '1')}`).catch(() => {});
   };
   $('jwCountdown').checked = store.get('jwCountdown', '1') === '1';
   $('jwCountdown').onchange = e => { store.set('jwCountdown', e.target.checked ? '1' : '0'); tellMeeting(); };
+  $('zoomMute').checked = store.get('zoomMute', '1') === '1';
+  $('zoomMute').onchange = e => { store.set('zoomMute', e.target.checked ? '1' : '0'); tellMeeting(); };
+  // Zoom muted 30 seconds before the start: a note when it's done (or why it wasn't).
+  let mutedSeen = null;
+  everyMs(1000, () => {
+    if (!timer) return;
+    if (mutedSeen === null) mutedSeen = timer.zoomMutedAt;   // not one from before the page opened
+    if (timer.zoomMutedAt === mutedSeen) return;
+    if (Date.now() - (window.mutedByButtonAt || 0) < 20000) { mutedSeen = timer.zoomMutedAt; return; }
+    toast(timer.zoomMute.startsWith('muted') ? 'Zoom: everyone muted' + (timer.zoomMute.includes('not allowed') ? ', and can’t unmute themselves' : '')
+                                                           : 'Couldn’t mute Zoom — ' + timer.zoomMute);
+    mutedSeen = timer.zoomMutedAt;
+  });
   setTimeout(tellMeeting);
   everyMs(5000, tellMeeting);   // soon after the meeting times are changed, too
 }

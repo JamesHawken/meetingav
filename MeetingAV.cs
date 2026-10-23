@@ -435,7 +435,8 @@ static class MeetingAV
                    ",\"left\":" + TimerLeft + ",\"length\":" + TimerLength + ",\"label\":" + Json(TimerLabel) +
                    ",\"now\":" + NowMs() + ",\"shown\":" + (TimerScreen != "" ? "true" : "false") +
                    ",\"screen\":" + Json(TimerScreen) + ",\"meetingAt\":" + MeetingAt +
-                   ",\"jwOff\":" + (JwDisplayOff ? "true" : "false") + ",\"tv\":\"" + (TvShowsZoom ? "zoom" : "jw") + "\"}";
+                   ",\"jwOff\":" + (JwDisplayOff ? "true" : "false") + ",\"tv\":\"" + (TvShowsZoom ? "zoom" : "jw") + "\"" +
+                   ",\"zoomMutedAt\":" + ZoomMutedAt + ",\"zoomMute\":" + Json(ZoomMuteResult) + ",\"zoomMics\":" + Json(ZoomMics) + "}";
     }
 
     // set (load a part of secs), start, stop, reset (back to the part's length), add (secs, may be
@@ -709,6 +710,11 @@ static class MeetingAV
     static void WatchCountdown()   // every second, on the UI thread
     {
         long left = MeetingAt - NowMs();
+        if (ZoomMuteOn && MeetingAt > 0 && left > 0 && left <= 30000 && MutedFor != MeetingAt)
+        {
+            MutedFor = MeetingAt;
+            new Thread(() => { ZoomMuteResult = MuteZoomEveryone(); ZoomMutedAt = NowMs(); }) { IsBackground = true }.Start();
+        }
         bool soon = CountdownOn && MeetingAt > 0 && left > 0 && left <= 5 * 60000 && CountdownDismissedFor != MeetingAt;
         Screen screen = soon ? JwTargetScreen() : null;
         bool want = screen != null;
@@ -1076,6 +1082,393 @@ static class MeetingAV
             if (name.IsMatch(e.Current.Name) && !e.Current.IsOffscreen) return e;
         return null;
     }
+
+    // ---- Zoom: everyone muted 30 seconds before the start ---------------------------------------
+    // Zoom's meeting window on this PC's screen (never its window on the hall's TV) comes to the
+    // front; "Mute all" at the bottom of its Participants panel is clicked (the panel opened with
+    // Alt+U if it's closed); in the box Zoom shows to confirm, "Allow participants to unmute
+    // themselves" is unticked and Yes clicked. Zoom shows none of this to Windows' accessibility
+    // interface, so it's found by its colours and clicked with the mouse, which is put back after,
+    // as is the keyboard. It needs Meeting AV's user to be host or co-host.
+
+    static bool ZoomMuteOn = true;
+    static volatile string ZoomMics = "";   // what Meeting AV last left: "muted", "open", or "" (not known)
+    static long MutedFor, ZoomMutedAt;
+    static string ZoomMuteResult = "";
+
+    static string MuteZoomEveryone()
+    {
+        Screen tv = JwTargetScreen();
+        IntPtr zoom = IntPtr.Zero;
+        EnumWindows((h, p) =>
+        {
+            var c = new StringBuilder(64);
+            GetClassName(h, c, 64);
+            if (c.ToString() == "ConfMultiTabContentWndClass" && IsWindowVisible(h) &&
+                (tv == null || Screen.FromHandle(h).DeviceName != tv.DeviceName)) { zoom = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        if (zoom == IntPtr.Zero) return "no Zoom meeting open";
+        IntPtr was = GetForegroundWindow();
+        BringToFront(zoom);
+        for (int i = 0; i < 10 && GetForegroundWindow() != zoom; i++) Thread.Sleep(50);
+        if (GetForegroundWindow() != zoom) return "couldn't bring Zoom forward";
+        // "Mute all" at the bottom of Zoom's Participants panel (Alt+M would be a toggle: pressed
+        // when everyone is muted, it asks them all to unmute). The panel is opened if it's closed.
+        Point mouseAt = Cursor.Position;
+        Point muteAll = FindMuteAll(zoom);
+        if (muteAll.IsEmpty)
+        {
+            keybd_event(0x12, 0, 0, UIntPtr.Zero);     // Alt+U: Participants
+            keybd_event(0x55, 0, 0, UIntPtr.Zero);
+            keybd_event(0x55, 0, 2, UIntPtr.Zero);
+            keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            for (int i = 0; i < 10 && muteAll.IsEmpty; i++) { Thread.Sleep(200); muteAll = FindMuteAll(zoom); }
+        }
+        if (muteAll.IsEmpty) { if (was != IntPtr.Zero && was != zoom) BringToFront(was); return "couldn't find Zoom's Mute all"; }
+        Click(muteAll.X, muteAll.Y);
+        Cursor.Position = mouseAt;
+        // Zoom asks to confirm, with "Allow participants to unmute themselves": its box shows no
+        // controls to Windows' accessibility interface, so it's read by colour - the tickbox (left)
+        // is blue only when ticked, the Yes button (right) is blue - and clicked with the mouse.
+        string result = "muted";
+        IntPtr box = IntPtr.Zero;
+        for (int i = 0; i < 30 && box == IntPtr.Zero; i++)
+        {
+            Thread.Sleep(100);
+            IntPtr d = FindWindow("zChangeNameWndClass", null);
+            if (d != IntPtr.Zero && IsWindowVisible(d)) box = d;
+        }
+        if (box != IntPtr.Zero)
+        {
+            Point mouseWas = Cursor.Position;
+            // Read and clicked only where nothing covers it: pinned on top of everything meanwhile.
+            BringToFront(box);
+            SetWindowPos(box, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040);
+            Thread.Sleep(300);   // drawn
+            Rectangle tick, yes;
+            FindBlue(box, out tick, out yes);
+            if (!tick.IsEmpty)
+            {
+                Click(tick.X + tick.Width / 2, tick.Y + tick.Height / 2);
+                Thread.Sleep(300);
+                FindBlue(box, out tick, out yes);
+            }
+            if (!tick.IsEmpty) result = "muted, but couldn't untick unmuting";
+            else { result = "muted, unmuting not allowed"; ZoomMics = "muted"; }
+            for (int i = 0; i < 2 && !yes.IsEmpty && IsWindowVisible(box); i++)
+            {
+                Click(yes.X + yes.Width / 2, yes.Y + yes.Height / 2);
+                Thread.Sleep(600);
+            }
+            if (yes.IsEmpty) result = "couldn't find Zoom's Yes button";
+            else if (IsWindowVisible(box)) result = "couldn't press Zoom's Yes button";
+            Cursor.Position = mouseWas;
+            if (IsWindowVisible(box)) SetWindowPos(box, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+        }
+        Thread.Sleep(200);
+        if (was != IntPtr.Zero && was != zoom) BringToFront(was);
+        return result;
+    }
+
+    // Windows only lets the program in front choose what comes to the front, so this joins in with
+    // the window in front for a moment to do it.
+    static void BringToFront(IntPtr h)
+    {
+        IntPtr front = GetForegroundWindow();
+        uint dummy, me = GetCurrentThreadId(), them = front == IntPtr.Zero ? 0 : GetWindowThreadProcessId(front, out dummy);
+        bool attached = them != 0 && them != me && AttachThreadInput(me, them, true);
+        AllowForeground();
+        SetForegroundWindow(h);
+        BringWindowToTop(h);
+        if (attached) AttachThreadInput(me, them, false);
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+
+    // Zoom's Participants panel ends in a row of three grey buttons - Invite, Mute all, More - on the
+    // panel's darker grey. Found from the bottom of Zoom's window up; the middle one's centre, in screen
+    // pixels, or empty when the panel isn't open.
+    static Point FindMuteAll(IntPtr zoom)
+    {
+        Point[] b = FindPanelButtons(zoom);
+        return b == null ? Point.Empty : b[1];
+    }
+
+    // Invite, Mute all, More: their centres, or null.
+    static Point[] FindPanelButtons(IntPtr zoom)
+    {
+        RECT r;
+        if (!GetWindowRect(zoom, out r)) return null;
+        // The right half, top to bottom: Host tools open under the panel push its buttons up.
+        var area = Rectangle.FromLTRB(r.Left + (r.Right - r.Left) / 2, r.Top + 60, r.Right, r.Bottom);
+        using (var b = new Bitmap(area.Width, area.Height))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
+            for (int y = b.Height - 4; y > 0; y -= 2)
+            {
+                List<int[]> row = ButtonRow(b, y);
+                if (row == null) continue;
+                // The row's middle: the bottom edge found first is just below Zoom's menu when it's open.
+                int top = y;
+                while (top - 2 > 0 && ButtonRow(b, top - 2) != null) top -= 2;
+                int mid = (top + y) / 2;
+                return row.ConvertAll(m => new Point(area.X + (m[0] + m[1]) / 2, area.Y + mid)).ToArray();
+            }
+        }
+        return null;
+    }
+
+    // The middle of the lowest line of white words in an area of the screen, or empty.
+    static Point LowestTextLine(Rectangle area)
+    {
+        using (var b = new Bitmap(area.Width, area.Height))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
+            int bottom = -1, top = -1;
+            for (int y = b.Height - 1; y >= 0; y--)
+            {
+                int bright = 0;
+                for (int x = 0; x < b.Width; x++) { Color c = b.GetPixel(x, y); if (c.R > 170 && c.G > 170 && c.B > 170) bright++; }
+                if (bright >= 3) { if (bottom < 0) bottom = y; top = y; }
+                else if (bottom >= 0 && bottom - y > 2) break;   // past the line
+            }
+            return bottom < 0 ? Point.Empty : new Point(area.X + b.Width / 2, area.Y + (top + bottom) / 2);
+        }
+    }
+
+    // The three buttons' left and right edges on one line of the picture, or null.
+    static List<int[]> ButtonRow(Bitmap b, int y)
+    {
+        Func<Color, bool> button = c => c.R >= 37 && c.R <= 56 && Math.Abs(c.R - c.G) < 6 && Math.Abs(c.G - c.B) < 8;
+        Func<Color, bool> panel = c => c.R >= 22 && c.R <= 36 && Math.Abs(c.R - c.G) < 6 && Math.Abs(c.G - c.B) < 8;
+        var runs = new List<int[]>();
+        int start = -1;
+        for (int x = 0; x < b.Width; x++)
+        {
+            Color c = b.GetPixel(x, y);
+            bool isButton = button(c) || (start >= 0 && !panel(c) && c.R > 56);   // words on a button
+            if (isButton) { if (start < 0) start = x; }
+            else if (start >= 0) { if (x - start >= 40) runs.Add(new[] { start, x }); start = -1; }
+        }
+        if (start >= 0 && b.Width - start >= 40) runs.Add(new[] { start, b.Width });
+        // Words inside a button split it into pieces: pieces closer than 4px are one button.
+        var merged = new List<int[]>();
+        foreach (int[] run in runs)
+            if (merged.Count > 0 && run[0] - merged[merged.Count - 1][1] < 4) merged[merged.Count - 1][1] = run[1];
+            else merged.Add(run);
+        return merged.Count == 3 && merged.TrueForAll(m => m[1] - m[0] >= 60) ? merged : null;
+    }
+
+    // ---- Zoom: everyone allowed to unmute themselves (without unmuting anyone) -------------------
+    // In Zoom's Host tools pane, under "Participant permissions", the first switch is "Unmute
+    // themselves". The pane is opened from the Participants panel's More menu (its last item) if it's
+    // closed. Read by colour and clicked with the mouse, like the mute.
+    static string AllowZoomUnmute()
+    {
+        Screen tv = JwTargetScreen();
+        IntPtr zoom = IntPtr.Zero;
+        EnumWindows((h, p) =>
+        {
+            var c = new StringBuilder(64);
+            GetClassName(h, c, 64);
+            if (c.ToString() == "ConfMultiTabContentWndClass" && IsWindowVisible(h) &&
+                (tv == null || Screen.FromHandle(h).DeviceName != tv.DeviceName)) { zoom = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        if (zoom == IntPtr.Zero) return "no Zoom meeting open";
+        IntPtr was = GetForegroundWindow();
+        Point mouseAt = Cursor.Position;
+        BringToFront(zoom);
+        Thread.Sleep(300);
+        string result;
+        try
+        {
+            bool on;
+            Point sw = FindUnmuteSwitchScrolling(zoom, out on);
+            if (sw.IsEmpty)
+            {
+                Point[] buttons = FindPanelButtons(zoom);
+                if (buttons == null)
+                {
+                    keybd_event(0x12, 0, 0, UIntPtr.Zero);     // Alt+U: Participants
+                    keybd_event(0x55, 0, 0, UIntPtr.Zero);
+                    keybd_event(0x55, 0, 2, UIntPtr.Zero);
+                    keybd_event(0x12, 0, 2, UIntPtr.Zero);
+                    for (int i = 0; i < 10 && buttons == null; i++) { Thread.Sleep(200); buttons = FindPanelButtons(zoom); }
+                }
+                if (buttons == null) return "couldn't find Zoom's Participants panel";
+                for (int attempt = 0; attempt < 2 && sw.IsEmpty; attempt++)
+                {
+                    Click(buttons[2].X, buttons[2].Y);   // More
+                    Thread.Sleep(900);                   // the menu finishes appearing
+                    // The menu opens over the buttons, its last item (Host tools) level with them. Only
+                    // clicked once the buttons are covered - never Mute all by mistake.
+                    if (FindPanelButtons(zoom) != null) continue;
+                    // Host tools: the menu's last line of words, found by its white text.
+                    Point item = LowestTextLine(new Rectangle(buttons[0].X, buttons[1].Y - 160, buttons[2].X + 40 - buttons[0].X, 190));
+                    if (item.IsEmpty) continue;
+                    Click(buttons[1].X, item.Y);
+                    Thread.Sleep(300);
+                    IntPtr oops = FindWindow("zChangeNameWndClass", null);   // Mute all after all: cancelled
+                    if (oops != IntPtr.Zero && IsWindowVisible(oops))
+                    {
+                        BringToFront(oops);
+                        keybd_event(0x1B, 0, 0, UIntPtr.Zero); keybd_event(0x1B, 0, 2, UIntPtr.Zero);
+                        return "couldn't open Zoom's Host tools";
+                    }
+                    Thread.Sleep(800);
+                    sw = FindUnmuteSwitchScrolling(zoom, out on);
+                }
+                if (sw.IsEmpty) { keybd_event(0x1B, 0, 0, UIntPtr.Zero); keybd_event(0x1B, 0, 2, UIntPtr.Zero); return "couldn't find Zoom's Host tools"; }
+            }
+            if (!on)
+            {
+                Click(sw.X, sw.Y);
+                Cursor.Position = mouseAt;   // the pointer over it changes its colours
+                // Zoom slides the switch across, and may move the pane: looked at for up to 2 seconds.
+                for (int i = 0; i < 10 && !on; i++)
+                {
+                    Thread.Sleep(200);
+                    bool now;
+                    on = BlueNear(sw) || (!FindUnmuteSwitch(zoom, out now).IsEmpty && now);
+                }
+            }
+            result = on ? "allowed" : "couldn't switch it on";
+        }
+        finally
+        {
+            Cursor.Position = mouseAt;
+            if (was != IntPtr.Zero && was != zoom) BringToFront(was);
+        }
+        return result;
+    }
+
+    // In a short Zoom window the Host tools pane is cut off before its permissions: it's scrolled
+    // down, a few steps at a time, until the switch shows.
+    static Point FindUnmuteSwitchScrolling(IntPtr zoom, out bool on)
+    {
+        Point sw = FindUnmuteSwitch(zoom, out on);
+        RECT r;
+        if (!sw.IsEmpty || !GetWindowRect(zoom, out r)) return sw;
+        Point[] buttons = FindPanelButtons(zoom);
+        if (buttons == null) return sw;   // no Participants panel, so no Host tools under it
+        // Under the panel's buttons is where Host tools sit.
+        var over = new Point(buttons[1].X, Math.Min(r.Bottom - 30, buttons[1].Y + 120));
+        if (over.Y <= buttons[1].Y + 40) return sw;
+        for (int i = 0; i < 6 && sw.IsEmpty; i++)
+        {
+            Cursor.Position = over;
+            Thread.Sleep(80);
+            mouse_event(0x0800, 0, 0, unchecked((uint)-360), UIntPtr.Zero);   // wheel down
+            Thread.Sleep(300);
+            sw = FindUnmuteSwitch(zoom, out on);
+        }
+        return sw;
+    }
+
+    // Whether Zoom's blue is within 14px either side of a point on the screen.
+    static bool BlueNear(Point p)
+    {
+        using (var b = new Bitmap(29, 5))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(p.X - 14, p.Y - 2, 0, 0, b.Size);
+            int n = 0;
+            for (int x = 0; x < b.Width; x++) for (int y = 0; y < b.Height; y++) { Color c = b.GetPixel(x, y); if (c.B > 190 && c.B - c.R > 120 && c.B - c.G > 60) n++; }
+            return n >= 10;
+        }
+    }
+
+    // The "Unmute themselves" switch: the first switch under the permissions heading, whose "Suspend
+    // all" sits in a grey pill with blue words at the pane's right edge. Its centre, and whether it's
+    // on (Zoom's blue, knob right) or off (dark, knob left); empty when the pane isn't open.
+    static Point FindUnmuteSwitch(IntPtr zoom, out bool on)
+    {
+        on = false;
+        RECT r;
+        if (!GetWindowRect(zoom, out r)) return Point.Empty;
+        var area = Rectangle.FromLTRB(r.Right - 170, r.Top + 40, r.Right - 4, r.Bottom - 4);
+        using (var b = new Bitmap(area.Width, area.Height))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
+            Func<Color, bool> pill = c => c.R >= 44 && c.R <= 58 && Math.Abs(c.R - c.G) < 5 && Math.Abs(c.G - c.B) < 6;
+            Func<Color, bool> blueWord = c => c.B > 150 && c.B - c.R > 70;
+            Func<Color, bool> blue = c => c.R < 50 && c.G > 85 && c.G < 135 && c.B > 195;
+            Func<Color, bool> white = c => c.R > 235 && c.G > 235 && c.B > 235;
+            Func<Color, bool> knob = c => c.R >= 205 && c.R <= 240 && Math.Abs(c.R - c.B) < 14;
+            Func<Color, bool> track = c => c.R >= 31 && c.R <= 40 && Math.Abs(c.R - c.G) < 4 && Math.Abs(c.G - c.B) < 5;
+            int heading = -1;
+            for (int y = 0; y < b.Height && heading < 0; y++)
+            {
+                int pills = 0, words = 0;
+                for (int x = 0; x < b.Width; x++) { Color c = b.GetPixel(x, y); if (pill(c)) pills++; else if (blueWord(c)) words++; }
+                if (pills >= 30 && words >= 3) heading = y;
+            }
+            if (heading < 0) return Point.Empty;
+            for (int y = heading + 14; y < b.Height; y++)
+            {
+                // A switch: a run of blue then white (on), or of knob grey then track (off).
+                for (int x = 0; x + 20 < b.Width; x++)
+                {
+                    Color c = b.GetPixel(x, y);
+                    if (blue(c) && blue(b.GetPixel(x + 6, y)) && (white(b.GetPixel(x + 14, y)) || white(b.GetPixel(x + 18, y))))
+                    { on = true; return new Point(area.X + x + 10, area.Y + y); }
+                    if (knob(c) && knob(b.GetPixel(x + 3, y)) && track(b.GetPixel(x + 12, y)) && track(b.GetPixel(x + 18, y)))
+                    { on = false; return new Point(area.X + x + 10, area.Y + y); }
+                }
+            }
+        }
+        return Point.Empty;
+    }
+
+    // Zoom's blue: the blue area in the left third of the box (a ticked tickbox, a lighter blue), and in
+    // the rest (the Yes button), in screen pixels; empty where there's none.
+    static void FindBlue(IntPtr box, out Rectangle left, out Rectangle right)
+    {
+        left = right = Rectangle.Empty;
+        RECT r;
+        if (!GetWindowRect(box, out r)) return;
+        // Inside the box's panel only: its window has see-through edges showing what's behind.
+        int w = r.Right - r.Left, h = r.Bottom - r.Top;
+        var area = Rectangle.FromLTRB(r.Left + w / 16, r.Top + h / 9, r.Right - w / 16, r.Bottom - h / 9);
+        using (var b = new Bitmap(area.Width, area.Height))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
+            int l1 = int.MaxValue, t1 = int.MaxValue, r1 = -1, b1 = -1, l2 = int.MaxValue, t2 = int.MaxValue, r2 = -1, b2 = -1, n1 = 0, n2 = 0;
+            // Zoom's blues (the button, a ticked box), solid over 4×4 pixels: the blue fringes text
+            // smoothing leaves on letters don't count.
+            Func<int, int, bool> blue = (px, py) => { Color c = b.GetPixel(px, py); return c.B > 180 && c.B - c.R > 80 && c.B - c.G > 40; };
+            for (int y = 0; y + 3 < b.Height; y += 2)
+                for (int x = 0; x + 3 < b.Width; x += 2)
+                {
+                    if (!(blue(x, y) && blue(x + 3, y) && blue(x, y + 3) && blue(x + 3, y + 3))) continue;
+                    // The tickbox: left third, middle band. The buttons: bottom row, right of it.
+                    if (x < b.Width / 3 && y > b.Height * 3 / 10 && y < b.Height * 7 / 10) { n1++; l1 = Math.Min(l1, x); t1 = Math.Min(t1, y); r1 = Math.Max(r1, x); b1 = Math.Max(b1, y); }
+                    else if (x >= b.Width / 3 && y > b.Height * 6 / 10) { n2++; l2 = Math.Min(l2, x); t2 = Math.Min(t2, y); r2 = Math.Max(r2, x); b2 = Math.Max(b2, y); }
+                }
+            if (n1 >= 6) left = new Rectangle(area.X + l1, area.Y + t1, r1 - l1 + 1, b1 - t1 + 1);
+            if (n2 >= 20) right = new Rectangle(area.X + l2, area.Y + t2, r2 - l2 + 1, b2 - t2 + 1);
+        }
+    }
+
+    // Zoom only takes a click on something the mouse has been seen to arrive over, so the pointer
+    // comes in from beside it, waits a moment, then presses and lets go.
+    static void Click(int x, int y)
+    {
+        Cursor.Position = new Point(x - 12, y - 6);
+        Thread.Sleep(120);
+        Cursor.Position = new Point(x, y);
+        Thread.Sleep(250);
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);   // left down
+        Thread.Sleep(80);
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);   // left up
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 
     // ---- The hall's TV: JW Library, or Zoom's second window --------------------------------------
     // Zoom in "dual monitors" mode keeps its second window (the gallery) on the screen JW Library
@@ -1840,6 +2233,7 @@ static class MeetingAV
                 Match at = Regex.Match(query, "at=(\\d+)");
                 MeetingAt = at.Success ? long.Parse(at.Groups[1].Value) : 0;
                 CountdownOn = !query.Contains("countdown=0");
+                ZoomMuteOn = !query.Contains("mute=0");
                 SendJson(stream, "{}");
             }
             else if (path == "/jw/screen-back" && local)   // the countdown hands JW Library its screen back now
@@ -1869,6 +2263,17 @@ static class MeetingAV
                     SendJson(stream, "{\"ok\":" + (ok ? "true" : "false") + ",\"tv\":\"" + (TvShowsZoom ? "zoom" : "jw") + "\"}");
                 }
                 finally { JwNavigating = 0; }
+            }
+            else if (path == "/zoom/allow-unmute" && local)
+            {
+                string result = AllowZoomUnmute();
+                if (result == "allowed") ZoomMics = "open";
+                SendJson(stream, "{\"result\":" + Json(result) + ",\"mics\":" + Json(ZoomMics) + "}");
+            }
+            else if (path == "/zoom/mute" && local)   // the same as 30 seconds before, now
+            {
+                ZoomMuteResult = MuteZoomEveryone(); ZoomMutedAt = NowMs();
+                SendJson(stream, "{\"result\":" + Json(ZoomMuteResult) + ",\"mics\":" + Json(ZoomMics) + "}");
             }
             else if (path == "/windows/arrange" && local)
                 SendJson(stream, ArrangeWindows());
