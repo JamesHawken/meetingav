@@ -466,6 +466,19 @@
   .spin { width: 20px; height: 20px; flex: none; border-radius: 50%; border: 3px solid var(--line);
           border-top-color: var(--accent); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* Covers the page while Meeting AV starts up: OBS, JW Library and Zoom opening, then arranged. */
+  #starting { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px;
+              background: var(--bg); color: var(--text); transition: opacity .4s; }
+  #starting.gone { opacity: 0; pointer-events: none; }
+  #starting .box { width: min(380px, 100%); display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center; }
+  #starting .spin { width: 48px; height: 48px; border-width: 5px; }
+  #starting h2 { margin: 0; font-size: 20px; color: var(--text); text-transform: none; letter-spacing: normal; }
+  #starting ul { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 8px;
+                 font-size: 14px; text-align: left; }
+  #starting li { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  #starting li svg.i { width: 18px; height: 18px; color: var(--ok); flex: none; }
+  #starting li.bad svg.i { color: var(--warn); }
+  #starting li .spin { width: 18px; height: 18px; border-width: 3px; }
 
   dialog { border: 0; border-radius: 16px; padding: 0; width: min(780px, calc(100vw - 32px));
            max-height: calc(100vh - 48px); background: var(--panel); color: var(--text);
@@ -524,6 +537,11 @@
 </style>
 </head>
 <body>
+<div id="starting" hidden><div class="box">
+  <span class="spin"></span>
+  <h2 id="startingTitle">Getting ready…</h2>
+  <ul id="startingSteps"></ul>
+</div></div>
 <main>
   <header>
     <h1><i data-icon="video"></i>Meeting AV</h1>
@@ -880,7 +898,11 @@
       <div class="setup" style="margin-top:0">
         <label class="tick"><input type="checkbox" id="appStartup"> Start Meeting AV when Windows starts</label>
         <label class="tick"><input type="checkbox" id="appUpdates"> Update automatically from GitHub</label>
+        <label>Zoom meeting link
+          <input type="url" id="appZoomLink" placeholder="https://us02web.zoom.us/j/…" spellcheck="false"></label>
       </div>
+      <p class="help">When Meeting AV starts (and on “Get ready again”), it opens JW Library and joins this
+        Zoom meeting. The invite link, with its passcode, or just the meeting ID. Leave it empty to open Zoom yourself.</p>
       <div class="actions"><button id="appCheck">Check for updates now</button><button id="guideBtn"><i data-icon="wand"></i>Run the setup guide</button></div>
       <p class="help" id="appInfo"></p>
       <div class="actions"><button id="saveSettings"><i data-icon="download"></i>Save settings to a file</button><button id="loadSettings">Load settings from a file</button>
@@ -1921,7 +1943,7 @@ if (inApp) {
     if (r && r.tv) { if (timer) timer.tv = r.tv; }
     showTv(r && r.tv || (timer && timer.tv));
     if (r && !r.busy) toast(r.ok ? (r.tv === 'zoom' ? 'Hall TV: Zoom' : 'Hall TV: JW Library')
-                                 : want === 'zoom' ? 'Zoom has no window on the hall TV — turn on dual monitors in Zoom' : 'Couldn’t switch the hall TV');
+                                 : want === 'zoom' ? 'Zoom has no window on the hall TV — turn on “Use dual monitors” in Zoom’s settings, then leave and rejoin the meeting (Zoom only sets it up on joining)' : 'Couldn’t switch the hall TV');
   });
   everyMs(1000, () => { if (timer && !tvGoing) showTv(timer.tv); });
   $('jwMediaBtn').onclick = () => jwGo('/jw/meetings', 'Opening the meeting media in JW Library…', 'JW Library: meeting media');
@@ -2066,6 +2088,7 @@ $('viewBtn').onclick = () => setSimple(!simple);
 function renderApp(a) {
   $('appStartup').checked = a.startup;
   $('appUpdates').checked = a.updates;
+  if (document.activeElement !== $('appZoomLink')) $('appZoomLink').value = a.zoomLink ?? '';
   $('updateBtn').hidden = a.update !== 'ready';
   $('appInfo').textContent = `This version installed ${a.installed}. ` + ({
     '': '', checking: 'Checking for updates…', 'up to date': 'It’s the latest.',
@@ -2076,6 +2099,7 @@ if (inApp) {
   const app = q => appFetch('/app' + q).then(renderApp).catch(() => {});
   $('appStartup').onchange = e => app('/set?startup=' + (e.target.checked ? 1 : 0));
   $('appUpdates').onchange = e => app('/set?updates=' + (e.target.checked ? 1 : 0));
+  $('appZoomLink').onchange = e => app('/set?zoom=' + encodeURIComponent(e.target.value.trim()));
   $('appCheck').onclick = () => app('/check');
   $('updateBtn').onclick = () => appFetch('/app/restart').catch(() => {});
   app('');
@@ -3587,7 +3611,36 @@ addHelp('#mixPanel h2', 'Volume for the PC’s speakers, and for Zoom and JW Lib
 // ---------------------------------------------------------------------------
 const setup = { seen: '', hidden: false, meeting: '', wasRunning: false, doneAt: 0 };
 
-function renderSetup({ running, lines }) {
+// While the app starts up, the page waits behind a spinner showing each step as it's done. A problem
+// still shows on the setup card once it's gone.
+function renderStarting({ startup, lines }) {
+  const el = $('starting');
+  if (!startup) {
+    if (!el.hidden && !el.classList.contains('gone')) { el.classList.add('gone'); setTimeout(() => el.hidden = true, 400); }
+    return;
+  }
+  el.hidden = false; el.classList.remove('gone');
+  const list = $('startingSteps');
+  list.innerHTML = '';
+  for (const line of lines) {
+    const m = line.match(/^\s*(.+?)\s+\[(ok|!!)\]\s*(.*)$/), head = line.match(/Getting ready for the (\w+) meeting/);
+    if (head) $('startingTitle').textContent = `Getting ready for the ${head[1]} meeting…`;
+    if (!m || m[1] === 'Error') continue;
+    const li = document.createElement('li');
+    li.className = m[2] === 'ok' ? '' : 'bad';
+    li.innerHTML = icon(m[2] === 'ok' ? 'check' : 'alert') + '<span></span>';
+    li.lastChild.textContent = m[1] + (m[3] ? ' — ' + m[3] : '');
+    list.appendChild(li);
+  }
+  const li = document.createElement('li');
+  li.innerHTML = '<span class="spin"></span><span></span>';
+  li.lastChild.textContent = lines.some(l => /All set|Finished with/.test(l)) ? 'Arranging the windows…' : 'Opening…';
+  list.appendChild(li);
+}
+
+function renderSetup(s) {
+  renderStarting(s);
+  const { running, lines } = s;
   const key = running + lines.join('\n');
   if (key === setup.seen) return;
   setup.seen = key;
@@ -3640,7 +3693,10 @@ $('setupAgain').onclick = () => appFetch('/setup/run').then(renderSetup).catch(s
 $('setupClose').onclick = () => { setup.hidden = true; $('setupCard').hidden = true; };
 
 if (inApp) {
-  setInterval(() => appFetch('/setup').then(renderSetup).catch(() => {}), 1000);
+  // Hidden until the app says it's starting up, so a reload or -NoSetup doesn't flash it.
+  const pollSetup = () => appFetch('/setup').then(renderSetup).catch(() => {});
+  pollSetup();
+  setInterval(pollSetup, 1000);
   // Tell the app this window is open; closing the last one quits the app (a reload comes straight back).
   const windowId = Math.random().toString(36).slice(2);
   appFetch('/hello?id=' + windowId).catch(() => {});

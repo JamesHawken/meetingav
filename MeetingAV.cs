@@ -1,8 +1,8 @@
 // MeetingAV.exe - the Meeting AV page as a desktop app.
 //   - Opens the page in its own window (WebView2, Edge's engine built into Windows; an Edge app
 //     window if that's missing) and lives in the tray while it's open
-//   - Gets the PC ready (OBS and its virtual camera) by running Start-Meeting.ps1;
-//     progress shows in the page
+//   - Gets the PC ready (OBS and its virtual camera, JW Library, and the Zoom meeting from the
+//     link in Settings > This PC) by running Start-Meeting.ps1; progress shows in the page
 //   - Serves the page to tablets on the hall Wi-Fi (port 8080, or the next free one, remembered)
 //   - Tells the page OBS's websocket port and password, so nobody has to type them
 //   - Sets the volume of the speakers, Zoom and JW Library (a small mixer in the page)
@@ -65,6 +65,7 @@ static class MeetingAV
     static readonly object SetupLock = new object();
     static readonly List<string> SetupLines = new List<string>();
     static bool SetupRunning;
+    static volatile bool StartingUp;   // the setup run at start-up, until the windows are arranged: the page waits behind "Getting ready"
     static string SetupMeeting;
     static bool NoObs;
 
@@ -149,7 +150,7 @@ static class MeetingAV
         CountdownTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         CountdownTimer.Tick += (s, e) => WatchCountdown();
         CountdownTimer.Start();
-        if (setup) RunSetup(SetupMeeting);
+        if (setup) { StartingUp = true; RunSetup(SetupMeeting); }
         Application.Run();
         GC.KeepAlive(Single);
         return 0;
@@ -393,7 +394,39 @@ static class MeetingAV
             }
             catch (Exception e) { AddSetupLine("  Setup [!!] could not run: " + e.Message); }
             lock (SetupLock) SetupRunning = false;
+            ArrangeWhenOpen();
+            StartingUp = false;
         }) { IsBackground = true }.Start();
+    }
+
+    // Once what the setup opened has its windows up (JW Library on the meeting's media, Zoom in the
+    // meeting), they're arranged as by the Arrange button. Gives up waiting after 90 seconds.
+    static void ArrangeWhenOpen()
+    {
+        bool wantJw, wantZoom;
+        lock (SetupLock)
+        {
+            wantJw = SetupLines.Exists(l => l.Contains("JW Library") && l.Contains("opened"));
+            wantZoom = SetupLines.Exists(l => l.Contains("Zoom meeting") && l.Contains("joining"));
+        }
+        for (int i = 0; i < 45; i++)
+        {
+            bool jw = false;
+            try { lock (JwLock) jw = JwMainWindow() != null; } catch { }
+            bool zoom = false;
+            foreach (Screen sc in Screen.AllScreens) zoom |= FindTopWindow("ConfMultiTabContentWndClass", sc) != IntPtr.Zero;
+            if ((jw || !wantJw) && (zoom || !wantZoom)) break;
+            Thread.Sleep(2000);
+        }
+        // JW Library going to the meeting's media first (WatchJwStart notices it within 2 seconds):
+        // arranging moves it and takes it out of the front, which would stop it opening the card.
+        if (wantJw)
+        {
+            Thread.Sleep(2500);
+            for (int i = 0; i < 60 && JwStarting; i++) Thread.Sleep(500);
+        }
+        try { OneAtATime(ArrangeWindows); } catch { }
+        AddSetupLine(string.Format("  {0,-34}[ok] done", "Windows arranged"));
     }
 
     static void AddSetupLine(string line)
@@ -405,7 +438,7 @@ static class MeetingAV
     static string SetupJson()
     {
         lock (SetupLock)
-            return "{\"running\":" + (SetupRunning ? "true" : "false") + ",\"lines\":[" +
+            return "{\"running\":" + (SetupRunning ? "true" : "false") + ",\"startup\":" + (StartingUp ? "true" : "false") + ",\"lines\":[" +
                    string.Join(",", SetupLines.ConvertAll(Json)) + "]}";
     }
 
@@ -613,6 +646,7 @@ static class MeetingAV
     static volatile string UpdateState = "";   // "", checking, ready, up to date, or what went wrong
     static string NewExe { get { return Path.Combine(AppDir, "MeetingAV.new.exe"); } }
     static string NoUpdatesFile { get { return Path.Combine(DataDir, "no-updates"); } }
+    static string ZoomLinkFile { get { return Path.Combine(DataDir, "zoom-link.txt"); } }   // read by Start-Meeting.ps1
 
     static void CheckForUpdate(bool asked)
     {
@@ -689,6 +723,7 @@ static class MeetingAV
     {
         return "{\"startup\":" + (StartsWithWindows() ? "true" : "false") +
                ",\"updates\":" + (File.Exists(NoUpdatesFile) ? "false" : "true") +
+               ",\"zoomLink\":" + Json(File.Exists(ZoomLinkFile) ? File.ReadAllText(ZoomLinkFile).Trim() : "") +
                ",\"installed\":" + Json(File.GetLastWriteTime(Application.ExecutablePath).ToString("d MMM yyyy, HH:mm", System.Globalization.CultureInfo.InvariantCulture)) +
                ",\"update\":" + Json(UpdateState) + "}";
     }
@@ -863,14 +898,13 @@ static class MeetingAV
                 if (item == null) return false;
                 Press(item);
                 JwMain = null;   // its page changed: looked up afresh
-                JwOpenMeetingMedia(w);
-                return true;
+                return JwOpenMeetingMedia(w);
             }
             catch { return false; }
         }
     }
 
-    static void JwOpenMeetingMedia(AutomationElement w)
+    static bool JwOpenMeetingMedia(AutomationElement w)
     {
         DayOfWeek d = DateTime.Now.DayOfWeek;
         bool weekend = d == DayOfWeek.Saturday || d == DayOfWeek.Sunday;
@@ -884,14 +918,14 @@ static class MeetingAV
             AutomationElement section = TreeWalker.ControlViewWalker.GetParent(head);
             if (section != null) card = section.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "MeetingDocumentCard"));
         }
-        if (card == null) return;
+        if (card == null) return false;
         // A card only opens with Enter, so JW Library is brought in front for it - and the key is sent
         // only if it really is in front, never into another program - then the focus goes back.
         IntPtr jw = new IntPtr(w.Current.NativeWindowHandle), was = GetForegroundWindow();
         card.SetFocus();
         Thread.Sleep(300);
-        if (GetForegroundWindow() != jw) { AllowForeground(); SetForegroundWindow(jw); Thread.Sleep(300); card.SetFocus(); Thread.Sleep(200); }
-        if (GetForegroundWindow() != jw) return;
+        if (GetForegroundWindow() != jw) { BringToFront(jw); Thread.Sleep(300); card.SetFocus(); Thread.Sleep(200); }
+        if (GetForegroundWindow() != jw) return false;
         SendKeys.SendWait("{ENTER}");
         // The article: in a narrow window its study notes open over it first.
         AutomationElement media = null;
@@ -909,6 +943,7 @@ static class MeetingAV
         }
         if (media != null) Press(media);
         if (was != IntPtr.Zero && was != jw) { Thread.Sleep(500); SetForegroundWindow(was); }
+        return media != null;
     }
 
     // Personal Study > Playlists.
@@ -1700,11 +1735,25 @@ static class MeetingAV
         Rectangle a = screen.WorkingArea;
         int half = a.Width / 2;
         IntPtr jw = IntPtr.Zero;
-        try { lock (JwLock) { AutomationElement w = JwMainWindow(); if (w != null) jw = new IntPtr(w.Current.NativeWindowHandle); } } catch { }
+        // Running but its window not found: it's changing page (or still starting), so it's looked for again.
+        for (int i = 0; i < 5 && jw == IntPtr.Zero; i++)
+        {
+            try { lock (JwLock) { AutomationElement w = JwMainWindow(); if (w != null) jw = new IntPtr(w.Current.NativeWindowHandle); } } catch { }
+            if (jw == IntPtr.Zero) { if (!JwRunning()) break; Thread.Sleep(1000); }
+        }
         // Zoom's meeting window on this screen - in "dual monitors" mode it has a second one on the
         // hall's TV, which is left alone - or else Zoom's home window.
         IntPtr zoom = FindTopWindow("ConfMultiTabContentWndClass", screen);
         if (zoom == IntPtr.Zero) zoom = FindTopWindow("ZPPTMainFrmWndClassEx", screen);
+        // With a meeting open, Zoom's home window (which it opens on starting) is only in the way.
+        else
+            EnumWindows((h, p) =>
+            {
+                var c = new StringBuilder(64);
+                GetClassName(h, c, 64);
+                if (c.ToString() == "ZPPTMainFrmWndClassEx" && IsWindowVisible(h) && !IsIconic(h)) ShowWindow(h, 7);   // minimised, not made active
+                return true;
+            }, IntPtr.Zero);
         var left = new Rectangle(a.X, a.Y, half, a.Height);
         var rightTop = new Rectangle(a.X + half, a.Y, a.Width - half, a.Height / 2);
         var rightBottom = new Rectangle(a.X + half, a.Y + a.Height / 2, a.Width - half, a.Height - a.Height / 2);
@@ -1718,7 +1767,14 @@ static class MeetingAV
         }
         // Only one of them: it has the whole right side.
         if (jw != IntPtr.Zero) PlaceWindow(jw, zoom != IntPtr.Zero ? rightTop : Rectangle.Union(rightTop, rightBottom));
-        if (zoom != IntPtr.Zero) PlaceWindow(zoom, jw != IntPtr.Zero ? rightBottom : Rectangle.Union(rightTop, rightBottom));
+        if (zoom != IntPtr.Zero)
+        {
+            PlaceWindow(zoom, jw != IntPtr.Zero ? rightBottom : Rectangle.Union(rightTop, rightBottom));
+            // Windows ignores "to the front" for a program that isn't active: on top of everything
+            // and straight back lifts it over the other windows without making it active.
+            SetWindowPos(zoom, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);   // topmost; no size, move or activate
+            SetWindowPos(zoom, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);   // not topmost, staying in front
+        }
         // In front of anything else on the screen, Meeting AV last so it keeps the keyboard. Zoom is
         // only brought forward, never made active: that would bring its window on the TV up too, and
         // JW Library takes its second display away when a window on that screen becomes active.
@@ -1763,12 +1819,15 @@ static class MeetingAV
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT value, int size);
 
+    static volatile bool JwStarting;   // JW Library just opened, on its way to the meeting's media
+
     // JW Library opened while Meeting AV is running goes straight to the meeting's media.
     static void WatchJwStart()
     {
         bool wasRunning = JwRunning();
         bool zoomWasOnTv = false;
-        DateTime zoomLeftAt = DateTime.MinValue;
+        DateTime zoomLeftAt = DateTime.MinValue, jwRefittedAt = DateTime.MinValue;
+        int jwInWindow = 0;
         // Left switched off by a Meeting AV that stopped mid-countdown: switched back on.
         if (File.Exists(JwOffFile)) { JwDisplayOff = true; if (!wasRunning) { try { File.Delete(JwOffFile); } catch { } JwDisplayOff = false; } }
         while (true)
@@ -1777,15 +1836,34 @@ static class MeetingAV
             bool running = JwRunning();
             if (running && !wasRunning)
             {
-                for (int i = 0; i < 30 && JwMainWindow() == null; i++) Thread.Sleep(1000);
-                Thread.Sleep(3000);   // its first page settles
-                JwOpenMeetings();
+                JwStarting = true;
+                try
+                {
+                    for (int i = 0; i < 30 && JwMainWindow() == null; i++) Thread.Sleep(1000);
+                    Thread.Sleep(3000);   // its first page settles
+                    // Still busy starting (checking for new publications, opening its second display),
+                    // it can miss the first try.
+                    for (int i = 0; i < 3 && OneAtATime(() => JwOpenMeetings() ? "ok" : "") != "ok"; i++) Thread.Sleep(3000);
+                }
+                finally { JwStarting = false; }
             }
             if (!running && JwDisplayOff && !JwBusy) { JwDisplayOff = false; try { File.Delete(JwOffFile); } catch { } }
             // Zoom's window on the hall TV closing (the meeting ended, or Zoom quit) takes JW Library's
             // picture there away with it, leaving the desktop: JW Library's second display is switched
             // off and on a few seconds later, which brings it back.
             Screen tvScreen = JwTargetScreen();
+            // JW Library opened its second display while the TV wasn't connected (or was asleep), so
+            // it's a window on the PC's screen and the TV shows the desktop. With a TV, JW Library fills
+            // it instead of opening a window: switched off and on, it goes there. Not more than once a
+            // minute, in case it keeps the window.
+            bool quiet = !JwDisplayOff && !JwBusy && !JwStarting && JwNavigating == 0 && !TvShowsZoom && (CountdownForm == null || CountdownForm.IsDisposed);
+            jwInWindow = running && tvScreen != null && quiet && FindJwSecondDisplay() != IntPtr.Zero ? jwInWindow + 1 : 0;
+            if (jwInWindow >= 2 && DateTime.Now - jwRefittedAt > TimeSpan.FromMinutes(1))
+            {
+                jwRefittedAt = DateTime.Now;
+                jwInWindow = 0;
+                if (JwSetSecondDisplay(false, false)) { Thread.Sleep(500); JwSetSecondDisplay(true, false); }
+            }
             bool zoomOnTv = tvScreen != null && FindTopWindow("ConfMultiTabContentWndClass", tvScreen) != IntPtr.Zero;
             if (zoomWasOnTv && !zoomOnTv) zoomLeftAt = DateTime.Now;
             zoomWasOnTv = zoomOnTv;
@@ -2605,11 +2683,16 @@ static class MeetingAV
                 SendJson(stream, AppJson());
             else if (path == "/app/set" && local)
             {
-                Match st = Regex.Match(query, "startup=([01])"), up = Regex.Match(query, "updates=([01])");
+                Match st = Regex.Match(query, "startup=([01])"), up = Regex.Match(query, "updates=([01])"), zl = Regex.Match(query, "zoom=([^&]*)");
                 try
                 {
                     if (st.Success) SetStartsWithWindows(st.Groups[1].Value == "1");
                     if (up.Success) { if (up.Groups[1].Value == "1") File.Delete(NoUpdatesFile); else File.WriteAllText(NoUpdatesFile, "off"); }
+                    if (zl.Success)
+                    {
+                        string link = Uri.UnescapeDataString(zl.Groups[1].Value.Replace('+', ' ')).Trim();
+                        if (link == "") File.Delete(ZoomLinkFile); else File.WriteAllText(ZoomLinkFile, link);
+                    }
                 }
                 catch { }
                 SendJson(stream, AppJson());

@@ -18,7 +18,12 @@ video, and run it all from a tablet.
    **Meeting AV** shortcut on the desktop; use that from then on.
 2. The first time, it switches on OBS's remote control (close OBS first if it's
    open) and starts OBS minimised by the clock, with the virtual camera on.
-3. Open JW Library and Zoom yourself.
+   If OBS crashed last time, it starts normally anyway (no Safe Mode question);
+   one that's stuck or not answering is closed and started again.
+3. It opens JW Library too. Put the congregation's Zoom invite link in
+   Settings → This PC → **Zoom meeting link** and it joins that meeting as well,
+   each time it starts (or on **Get ready again** in the tray menu), then
+   arranges the windows as **Arrange** does.
 4. The first time, a **setup guide** walks through the rest: OBS, the camera
    shots, meeting times, JW Library, the timer screen, following people and the
    tablet. Settings → This PC runs it again.
@@ -78,7 +83,7 @@ Monitor is the shot before the meeting.
   on that screen). It takes a few seconds, and leaves JW Library on the meeting's
   media.
 - **Arrange** (top): Meeting AV on the left half of the PC's screen, JW Library
-  top right, Zoom's meeting bottom right. JW Library's TV and Zoom's window on
+  top right, Zoom's meeting bottom right (Zoom's home window is minimised). JW Library's TV and Zoom's window on
   it are left alone.
 - **Meeting media** and **Playlists** (by the Auto ticks): open this week's
   meeting in JW Library, on its pictures and videos, or JW Library's playlists.
@@ -130,7 +135,10 @@ Monitor is the shot before the meeting.
   and videos don't reach the TV; **JW Library on the TV** (by the timer) gives it
   back sooner. Settings → Meeting switches the countdown on the TV off.
 - **JW Library:** opened while Meeting AV is running, it goes straight to the
-  meeting's media.
+  meeting's media. If its second display opened as a window on the PC (the TV
+  was off or not plugged in yet), Meeting AV moves it onto the TV once it's there.
+- **Zoom on the hall TV** needs Zoom's "Use dual monitors" setting, with the TV
+  connected when you join: Zoom only sets up its TV window on joining.
 
 ## Tablet or phone
 
@@ -168,7 +176,7 @@ changes.
 | `MeetingAV.manifest` | Built into the exe: measures every screen in real pixels, whatever its scaling |
 | `obs-remote.html`  | The control page, on the PC and on tablets                      |
 | `timer.html`       | The timer screen the speakers see                               |
-| `Start-Meeting.ps1`| Gets OBS ready (remote control on, started with the virtual camera) |
+| `Start-Meeting.ps1`| Gets OBS ready (remote control on, started with the virtual camera), opens JW Library, joins Zoom |
 | `lib/`             | Person detector, QR codes, tablet app icons                     |
 | `webview2/`        | Microsoft WebView2, which shows the page in the app's own window |
 
