@@ -149,15 +149,23 @@ function ConvertTo-ZoomJoin([string]$link) {
   return $link   # something else (a personal link name, zoommtg://): opened as it is
 }
 
-# Zoom's meeting window is open (it has the same window class whichever screen it's on).
+# Zoom's meeting window is open (it has the same window class whichever screen it's on). Only a
+# visible one counts: after a meeting Zoom keeps hidden ones, which would make it look as if it's
+# still in one, and the meeting wouldn't be joined.
 function Test-ZoomMeeting {
   if (-not (Get-Process Zoom -ErrorAction SilentlyContinue)) { return $false }
   if (-not ('MeetingAV.Win' -as [type])) {
-    Add-Type -Namespace MeetingAV -Name Win -MemberDefinition `
-      '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);'
+    Add-Type -Namespace MeetingAV -Name Win -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+'@
   }
   # [NullString]::Value: PowerShell would pass $null as "", which only finds a window with no title
-  return [MeetingAV.Win]::FindWindow('ConfMultiTabContentWndClass', [NullString]::Value) -ne [IntPtr]::Zero
+  $h = [IntPtr]::Zero
+  while (($h = [MeetingAV.Win]::FindWindowEx([IntPtr]::Zero, $h, 'ConfMultiTabContentWndClass', [NullString]::Value)) -ne [IntPtr]::Zero) {
+    if ([MeetingAV.Win]::IsWindowVisible($h)) { return $true }
+  }
+  return $false
 }
 
 # OBS leaves a file in .sentinel while it runs and removes it when it closes properly; one left

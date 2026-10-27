@@ -84,6 +84,11 @@ static class MeetingAV
             if (args[i].TrimStart('-', '/').ToLowerInvariant() == "after")
                 try { Process.GetProcessById(int.Parse(args[i + 1])).WaitForExit(15000); } catch { }
         if (ApplyUpdate(args)) return 0;
+        // Something going wrong in the window is noted in log.txt and the app carries on; on another
+        // thread it can't carry on, so it starts again (see Crashed).
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (s, e) => Log("window: " + e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (s, e) => Crashed(e.ExceptionObject as Exception);
         UnpackWebView2();
         bool setup = true;
         foreach (string arg in args)
@@ -116,10 +121,11 @@ static class MeetingAV
             return 1;
         }
         File.WriteAllText(portFile, Port.ToString());
-        new Thread(() => Serve(listener)) { IsBackground = true }.Start();
-        new Thread(WatchJwMedia) { IsBackground = true }.Start();
-        new Thread(WatchJwStart) { IsBackground = true }.Start();
-        new Thread(HoldMicSteady) { IsBackground = true }.Start();
+        Background("tablet server", () => Serve(listener));
+        Background("JW Library media", WatchJwMedia);
+        Background("JW Library start", WatchJwStart);
+        Background("microphone", HoldMicSteady);
+        Background("OBS", WatchObs);
 
         Application.EnableVisualStyles();
         UiThread = new Control();
@@ -145,18 +151,78 @@ static class MeetingAV
         MakeDesktopShortcut();
         StartWithWindowsFirstTime();
         CheckForUpdate(false);
+        // Before the window opens: starting up, it covers the PC's screen while the others open behind it.
+        if (setup) StartingUp = true;
         OpenWindow();
         ShowTimerScreen("auto", true);   // where it was last time, if that screen is still there
         CountdownTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         CountdownTimer.Tick += (s, e) => WatchCountdown();
         CountdownTimer.Start();
-        if (setup) { StartingUp = true; RunSetup(SetupMeeting); }
+        if (setup)
+        {
+            RunSetup(SetupMeeting);
+            // However the start-up goes, the PC's screen isn't covered for more than 3 minutes.
+            var giveUp = new System.Windows.Forms.Timer { Interval = 180000 };
+            giveUp.Tick += (s, e) => { giveUp.Stop(); Uncover(); StartingUp = false; };
+            giveUp.Start();
+        }
         Application.Run();
         GC.KeepAlive(Single);
         return 0;
     }
 
     static Mutex Single;   // only one copy runs
+
+    // ---- Staying up ---------------------------------------------------------------
+    // What went wrong goes in log.txt (in the data folder): started afresh at 200 KB, the one before
+    // kept as log.old.txt.
+
+    static readonly object LogLock = new object();
+    static string LogFile { get { return Path.Combine(DataDir, "log.txt"); } }
+
+    static void Log(string what)
+    {
+        lock (LogLock)
+        {
+            try
+            {
+                if (File.Exists(LogFile) && new FileInfo(LogFile).Length > 200000)
+                {
+                    File.Copy(LogFile, Path.Combine(DataDir, "log.old.txt"), true);
+                    File.Delete(LogFile);
+                }
+                File.AppendAllText(LogFile, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + what + Environment.NewLine);
+            }
+            catch { }
+        }
+    }
+
+    // A thread of its own, whose failure is noted in the log rather than closing the app.
+    static void Background(string name, Action work)
+    {
+        new Thread(() =>
+        {
+            try { work(); }
+            catch (Exception e) { Log(name + ": " + e); }
+        }) { IsBackground = true }.Start();
+    }
+
+    // Something failed that the app can't carry on from: a new copy starts in its place, without the
+    // setup (OBS, JW Library and Zoom are left as they are) - but not twice within 2 minutes, so a
+    // problem at start-up can't keep it starting over.
+    static void Crashed(Exception e)
+    {
+        Log("stopped: " + e);
+        try
+        {
+            string last = Path.Combine(DataDir, "last-crash.txt");
+            if (File.Exists(last) && DateTime.Now - File.GetLastWriteTime(last) < TimeSpan.FromMinutes(2)) return;
+            Touch(last);
+            if (Tray != null) Tray.Visible = false;
+            Process.Start(Application.ExecutablePath, "-NoSetup -after " + Process.GetCurrentProcess().Id);
+        }
+        catch { }
+    }
 
     static void Quit()
     {
@@ -238,10 +304,13 @@ static class MeetingAV
         string userData = Path.Combine(DataDir, "WebView2");
         MoveEdgeStorage(userData);
         LoaderReady();
-        AppWindow w = new AppWindow(Url, userData, new Icon(new MemoryStream(Resource("MeetingAV.ico"))));
+        AppWindow w = new AppWindow(StartingUp ? Url + "?starting" : Url, userData, new Icon(new MemoryStream(Resource("MeetingAV.ico"))));
         w.Failed += () => { w.Close(); Window = null; OpenInEdge(); };   // no WebView2 on this PC
         w.FormClosed += (s, e) => { if (!w.HasFailed) Quit(); };
         Window = w;
+        w.Message += OnPageMessage;
+        if (StartingUp) w.Cover(true);
+        else w.WindowState = FormWindowState.Maximized;   // the whole screen, still a window (after the setup: see ArrangeWhenOpen)
         w.Show();
     }
 
@@ -356,8 +425,9 @@ static class MeetingAV
 
     // ---- Setup ------------------------------------------------------------------
 
-    // Runs Start-Meeting.ps1 hidden; its output lines are shown by the page.
-    static void RunSetup(string meeting)
+    // Runs Start-Meeting.ps1 hidden; its output lines are shown by the page. obsOnly: just OBS, with
+    // JW Library, Zoom and the windows left as they are.
+    static void RunSetup(string meeting, bool obsOnly = false)
     {
         lock (SetupLock)
         {
@@ -378,6 +448,7 @@ static class MeetingAV
                 string arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -AppMode";
                 if (meeting != null) arguments += " -Meeting " + meeting;
                 if (NoObs) arguments += " -NoObs";
+                if (obsOnly) arguments += " -NoApps";
                 ProcessStartInfo psi = new ProcessStartInfo("powershell.exe", arguments)
                 {
                     UseShellExecute = false, CreateNoWindow = true,
@@ -394,29 +465,44 @@ static class MeetingAV
             }
             catch (Exception e) { AddSetupLine("  Setup [!!] could not run: " + e.Message); }
             lock (SetupLock) SetupRunning = false;
-            ArrangeWhenOpen();
-            StartingUp = false;
+            try { if (!obsOnly) ArrangeWhenOpen(); }
+            catch (Exception e) { Log("arranging: " + e); }
+            finally { Uncover(); StartingUp = false; }
         }) { IsBackground = true }.Start();
     }
 
     // Once what the setup opened has its windows up (JW Library on the meeting's media, Zoom in the
-    // meeting), they're arranged as by the Arrange button. Gives up waiting after 90 seconds.
+    // meeting), Zoom's camera is switched on and they're arranged as by the Arrange button. Gives up
+    // waiting after 90 seconds. Meeting AV's window, covering the PC's screen meanwhile, goes back to
+    // normal before arranging - or after 30 seconds, in case Zoom is asking something (a passcode,
+    // waiting for the host) that has to be seen.
     static void ArrangeWhenOpen()
     {
-        bool wantJw, wantZoom;
+        bool wantJw, wantZoom, inMeeting;
         lock (SetupLock)
         {
             wantJw = SetupLines.Exists(l => l.Contains("JW Library") && l.Contains("opened"));
             wantZoom = SetupLines.Exists(l => l.Contains("Zoom meeting") && l.Contains("joining"));
+            inMeeting = SetupLines.Exists(l => l.Contains("Zoom meeting") && l.Contains("already in a meeting"));
         }
+        bool zoom = false;
         for (int i = 0; i < 45; i++)
         {
             bool jw = false;
             try { lock (JwLock) jw = JwMainWindow() != null; } catch { }
-            bool zoom = false;
+            zoom = false;
             foreach (Screen sc in Screen.AllScreens) zoom |= FindTopWindow("ConfMultiTabContentWndClass", sc) != IntPtr.Zero;
+            if (wantZoom && !zoom) try { JoinFromPreview(); } catch { }
             if ((jw || !wantJw) && (zoom || !wantZoom)) break;
+            if (i == 15) Uncover();
             Thread.Sleep(2000);
+        }
+        // The camera on in the meeting joined, or the one Zoom was already in.
+        if (wantZoom && zoom || inMeeting)
+        {
+            string camera = "couldn't find Zoom's video button";
+            try { camera = ZoomCameraOn(); } catch { }
+            AddSetupLine(string.Format("  {0,-34}[{1}] {2}", "Zoom camera", camera.StartsWith("couldn't") ? "!!" : "ok", camera));
         }
         // JW Library going to the meeting's media first (WatchJwStart notices it within 2 seconds):
         // arranging moves it and takes it out of the front, which would stop it opening the card.
@@ -425,8 +511,18 @@ static class MeetingAV
             Thread.Sleep(2500);
             for (int i = 0; i < 60 && JwStarting; i++) Thread.Sleep(500);
         }
+        Uncover();
         try { OneAtATime(ArrangeWindows); } catch { }
+        // At start-up Meeting AV then takes the whole screen (JW Library and Zoom shown in it, and
+        // arranged on the right behind it); Arrange puts it back beside them.
+        OnUi(() => { if (Window != null && !Window.IsDisposed) Window.WindowState = FormWindowState.Maximized; });
         AddSetupLine(string.Format("  {0,-34}[ok] done", "Windows arranged"));
+    }
+
+    // Meeting AV's window back to normal from covering the PC's screen (from any thread).
+    static void Uncover()
+    {
+        try { if (Window != null && !Window.IsDisposed) Window.Invoke((Action)(() => Window.Cover(false))); } catch { }
     }
 
     static void AddSetupLine(string line)
@@ -749,7 +845,7 @@ static class MeetingAV
         if (ZoomMuteOn && MeetingAt > 0 && left > 0 && left <= 30000 && MutedFor != MeetingAt)
         {
             MutedFor = MeetingAt;
-            new Thread(() => { ZoomMuteResult = MuteZoomEveryone(); ZoomMutedAt = NowMs(); }) { IsBackground = true }.Start();
+            Background("muting Zoom", () => { ZoomMuteResult = MuteZoomEveryone(); ZoomMutedAt = NowMs(); });
         }
         bool soon = CountdownOn && MeetingAt > 0 && left > 0 && left <= 5 * 60000 && CountdownDismissedFor != MeetingAt;
         Screen screen = soon ? JwTargetScreen() : null;
@@ -762,7 +858,7 @@ static class MeetingAV
         if (want && !shown && left > JwBackLeadMs)
         {
             JwBusy = true;
-            new Thread(() =>
+            Background("countdown", () =>
             {
                 try { if (JwRunning() && JwSetSecondDisplay(false)) { JwDisplayOff = true; Touch(JwOffFile); } }
                 finally
@@ -779,7 +875,7 @@ static class MeetingAV
                         JwBusy = false;
                     });
                 }
-            }) { IsBackground = true }.Start();
+            });
         }
         else if (!want && shown)
         {
@@ -794,11 +890,11 @@ static class MeetingAV
     {
         if (!JwDisplayOff || JwBusy) return;
         JwBusy = true;
-        new Thread(() =>
+        Background("JW Library's screen back", () =>
         {
             try { if (!JwRunning() || JwSetSecondDisplay(true)) { JwDisplayOff = false; TvShowsZoom = false; try { File.Delete(JwOffFile); } catch { } } }
             finally { JwBusy = false; }
-        }) { IsBackground = true }.Start();
+        });
     }
 
     static void Touch(string file) { try { File.WriteAllText(file, DateTime.Now.ToString("s")); } catch { } }
@@ -815,12 +911,41 @@ static class MeetingAV
     static readonly Regex JwSecondName = new Regex("second|deuxi\u00e8me|segund|zweit|tweede", RegexOptions.IgnoreCase);
     static readonly Regex JwMediaName = new Regex(@"\bm[e\u00e9]di(a|as|en|os)\b", RegexOptions.IgnoreCase);
 
+    static IntPtr JwMainSeen;   // JW Library's main window, the last time it was found
+
     static AutomationElement JwMainWindow()
     {
         var menu = new PropertyCondition(AutomationElement.AutomationIdProperty, "HamburgerRadioButton");
         foreach (AutomationElement w in AutomationElement.RootElement.FindAll(TreeScope.Children,
                      new PropertyCondition(AutomationElement.NameProperty, "JW Library")))
-            if (w.FindFirst(TreeScope.Descendants, menu) != null) return w;
+            if (w.FindFirst(TreeScope.Descendants, menu) != null) { JwMainSeen = new IntPtr(w.Current.NativeWindowHandle); return w; }
+        return null;
+    }
+
+    // JW Library's main window, brought back (not made active) if it's minimised: minimised, it shows
+    // Windows nothing, not even its menu. The one last seen is brought back; if it hasn't been seen
+    // yet, each minimised JW Library window, until it's found (the others minimised again).
+    static AutomationElement JwMainWindowRestored()
+    {
+        AutomationElement w = JwMainWindow();
+        if (w != null || !JwRunning()) return w;
+        var tried = new List<IntPtr>();
+        if (JwMainSeen != IntPtr.Zero && IsWindow(JwMainSeen) && IsIconic(JwMainSeen)) tried.Add(JwMainSeen);
+        else
+            foreach (AutomationElement named in AutomationElement.RootElement.FindAll(TreeScope.Children,
+                         new PropertyCondition(AutomationElement.NameProperty, "JW Library")))
+            {
+                IntPtr h = new IntPtr(named.Current.NativeWindowHandle);
+                if (IsIconic(h)) tried.Add(h);
+            }
+        foreach (IntPtr h in tried)
+        {
+            ShowWindow(h, 4);   // restored, not activated
+            w = WaitFor(JwMainWindow, 1500);
+            if (w != null && new IntPtr(w.Current.NativeWindowHandle) == h) return w;
+            ShowWindow(h, 7);   // not this one (its second display): minimised again
+            if (w != null) return w;
+        }
         return null;
     }
 
@@ -890,10 +1015,8 @@ static class MeetingAV
         {
             try
             {
-                AutomationElement w = JwMainWindow();
+                AutomationElement w = JwMainWindowRestored();   // minimised: brought back
                 if (w == null) return false;
-                IntPtr h = new IntPtr(w.Current.NativeWindowHandle);
-                if (IsIconic(h)) { ShowWindow(h, 9); Thread.Sleep(800); }   // minimised: brought back
                 AutomationElement item = JwMenuItem(w, JwMeetingsName, 3);
                 if (item == null) return false;
                 Press(item);
@@ -920,13 +1043,21 @@ static class MeetingAV
         }
         if (card == null) return false;
         // A card only opens with Enter, so JW Library is brought in front for it - and the key is sent
-        // only if it really is in front, never into another program - then the focus goes back.
+        // only if it really is in front, never into another program - then the window that was in
+        // front gets it straight back.
         IntPtr jw = new IntPtr(w.Current.NativeWindowHandle), was = GetForegroundWindow();
-        card.SetFocus();
-        Thread.Sleep(300);
-        if (GetForegroundWindow() != jw) { BringToFront(jw); Thread.Sleep(300); card.SetFocus(); Thread.Sleep(200); }
-        if (GetForegroundWindow() != jw) return false;
-        SendKeys.SendWait("{ENTER}");
+        JwFrontWanted = true;
+        try
+        {
+            card.SetFocus();
+            Thread.Sleep(300);
+            if (GetForegroundWindow() != jw) { BringToFront(jw); Thread.Sleep(300); card.SetFocus(); Thread.Sleep(200); }
+            if (GetForegroundWindow() != jw) return false;
+            SendKeys.SendWait("{ENTER}");
+            Thread.Sleep(150);
+        }
+        finally { JwFrontWanted = false; }
+        if (was != IntPtr.Zero && was != jw) BringToFront(was);
         // The article: in a narrow window its study notes open over it first.
         AutomationElement media = null;
         for (int i = 0; i < 24 && media == null; i++)
@@ -942,9 +1073,63 @@ static class MeetingAV
                     if (!more.Current.IsOffscreen) { Press(more); break; }
         }
         if (media != null) Press(media);
-        if (was != IntPtr.Zero && was != jw) { Thread.Sleep(500); SetForegroundWindow(was); }
         return media != null;
     }
+
+    // Meeting media and Playlists, from Meeting AV's buttons: JW Library goes to them without coming
+    // to the front. It makes itself the active window as it changes page, so whatever was in front
+    // (Meeting AV) is put back each time, while it's going there and for 3 seconds after - except
+    // for the moment a meeting's card needs JW Library in front, to open it with Enter.
+    static volatile bool JwFrontWanted;
+
+    static bool JwKeepingFront(Func<bool> go)
+    {
+        IntPtr front = GetForegroundWindow();
+        var title = new StringBuilder(32);
+        if (front != IntPtr.Zero) { GetWindowText(front, title, 32); if (title.ToString() == "JW Library") front = IntPtr.Zero; }
+        var done = new ManualResetEvent(false);
+        if (front != IntPtr.Zero)
+            new Thread(() =>
+            {
+                var t = new StringBuilder(32);
+                DateTime until = DateTime.MaxValue;
+                while (DateTime.Now < until)
+                {
+                    if (until == DateTime.MaxValue && done.WaitOne(15)) until = DateTime.Now.AddSeconds(3);
+                    else if (until != DateTime.MaxValue) Thread.Sleep(15);
+                    if (JwFrontWanted) continue;
+                    IntPtr now = GetForegroundWindow();
+                    if (now == front || now == IntPtr.Zero) continue;
+                    t.Clear();
+                    GetWindowText(now, t, 32);
+                    if (t.ToString() == "JW Library") BringToFront(front);
+                }
+                done.Dispose();
+            }) { IsBackground = true }.Start();
+        // Minimised, JW Library is brought back out of sight to be driven, and minimised again after.
+        IntPtr jw = JwMainHandle != IntPtr.Zero && IsWindow(JwMainHandle) ? JwMainHandle : JwMainSeen;
+        bool minimised = jw != IntPtr.Zero && IsWindow(jw) && IsIconic(jw);
+        WINDOWPLACEMENT was = minimised ? JwOutOfSight(jw) : default(WINDOWPLACEMENT);
+        try { return go(); }
+        finally
+        {
+            if (minimised) { Thread.Sleep(800); JwBackToMinimised(jw, was); }
+            // Not taking the front, JW Library can still have come up over it: put back behind.
+            else if (front != IntPtr.Zero && jw != IntPtr.Zero && IsWindow(jw) && Above(jw, front))
+                SetWindowPos(jw, front, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);   // just under it; no size, move or activate
+            if (front != IntPtr.Zero) done.Set(); else done.Dispose();
+        }
+    }
+
+    // Whether window a is in front of window b.
+    static bool Above(IntPtr a, IntPtr b)
+    {
+        for (IntPtr h = GetWindow(b, 3); h != IntPtr.Zero; h = GetWindow(h, 3))   // GW_HWNDPREV: the one in front
+            if (h == a) return true;
+        return false;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
 
     // Personal Study > Playlists.
     static readonly Regex JwPlaylistsName = new Regex("^(Playlists|Listes de lecture|Listas de reproducci\u00f3n|Wiedergabelisten|Playlist)", RegexOptions.IgnoreCase);
@@ -957,10 +1142,8 @@ static class MeetingAV
         {
             try
             {
-                AutomationElement w = JwMainWindow();
+                AutomationElement w = JwMainWindowRestored();
                 if (w == null) return false;
-                IntPtr h = new IntPtr(w.Current.NativeWindowHandle);
-                if (IsIconic(h)) { ShowWindow(h, 9); Thread.Sleep(800); }
                 if (w.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "SearchBar")) != null &&
                     JwFindNamed(w, JwPlaylistsName) != null) return true;   // already there
                 AutomationElement study = JwMenuItem(w, new Regex("^(Personal Study|\u00c9tude individuelle)$", RegexOptions.IgnoreCase), 4);
@@ -1058,7 +1241,7 @@ static class MeetingAV
             }
             catch { return false; }
         }
-        new Thread(() => JwTidyUp(w, jwh, on, thenMeetingMedia, section)) { IsBackground = true }.Start();
+        Background("JW Library tidy-up", () => JwTidyUp(w, jwh, on, thenMeetingMedia, section));
         return done;
     }
 
@@ -1162,21 +1345,14 @@ static class MeetingAV
         BringToFront(zoom);
         for (int i = 0; i < 10 && GetForegroundWindow() != zoom; i++) Thread.Sleep(50);
         if (GetForegroundWindow() != zoom) return "couldn't bring Zoom forward";
-        FitZoom(zoom);
         // "Mute all" at the bottom of Zoom's Participants panel (Alt+M would be a toggle: pressed
         // when everyone is muted, it asks them all to unmute). The panel is opened if it's closed.
         Point mouseAt = Cursor.Position;
-        Point muteAll = FindMuteAll(zoom);
-        if (muteAll.IsEmpty)
-        {
-            keybd_event(0x12, 0, 0, UIntPtr.Zero);     // Alt+U: Participants
-            keybd_event(0x55, 0, 0, UIntPtr.Zero);
-            keybd_event(0x55, 0, 2, UIntPtr.Zero);
-            keybd_event(0x12, 0, 2, UIntPtr.Zero);
-            for (int i = 0; i < 10 && muteAll.IsEmpty; i++) { Thread.Sleep(200); FitZoom(zoom); muteAll = FindMuteAll(zoom); }
-        }
+        IntPtr host;
+        Point[] buttons = OpenZoomPanel(zoom, out host);
+        Point muteAll = buttons == null ? Point.Empty : buttons[1];
         if (muteAll.IsEmpty) { if (was != IntPtr.Zero && was != zoom) BringToFront(was); return "couldn't find Zoom's Mute all"; }
-        if (!ClickZoom(zoom, muteAll)) { if (was != IntPtr.Zero && was != zoom) BringToFront(was); return "couldn't click Zoom's Mute all"; }
+        if (!ClickZoom(host, muteAll)) { if (was != IntPtr.Zero && was != zoom) BringToFront(was); return "couldn't click Zoom's Mute all"; }
         Cursor.Position = mouseAt;
         // Zoom asks to confirm, with "Allow participants to unmute themselves": its box shows no
         // controls to Windows' accessibility interface, so it's read by colour - the tickbox (left)
@@ -1243,7 +1419,8 @@ static class MeetingAV
             return true;
         }, IntPtr.Zero);
         IntPtr zoom = FindTopWindow("ConfMultiTabContentWndClass", pc);
-        bool panelWasOpen = zoom != IntPtr.Zero && FindPanelButtons(zoom) != null;
+        bool popupWasOpen = ZoomPopup() != IntPtr.Zero, toolsWindowWasOpen = ZoomHostTools() != IntPtr.Zero;
+        bool panelWasOpen = zoom != IntPtr.Zero && (popupWasOpen || FindPanelButtons(zoom) != null);
         bool toolsWereOpen = panelWasOpen && !HostToolsClose(zoom).IsEmpty;
         string result = work();
         // Panes opened for the work closed again: Host tools first (found from the Participants
@@ -1255,7 +1432,19 @@ static class MeetingAV
             CloseHostTools(zoom);
             Thread.Sleep(400);
         }
-        if (zoom != IntPtr.Zero && !panelWasOpen && FindPanelButtons(zoom) != null)
+        IntPtr toolsWindow = ZoomHostTools();
+        if (!toolsWindowWasOpen && toolsWindow != IntPtr.Zero)
+        {
+            PostMessage(toolsWindow, 0x0010, IntPtr.Zero, IntPtr.Zero);   // WM_CLOSE, as its ✕
+            Thread.Sleep(300);
+        }
+        IntPtr popup = ZoomPopup();
+        if (zoom != IntPtr.Zero && !popupWasOpen && popup != IntPtr.Zero)
+        {
+            PostMessage(popup, 0x0010, IntPtr.Zero, IntPtr.Zero);   // WM_CLOSE, as its ✕
+            Thread.Sleep(300);
+        }
+        else if (zoom != IntPtr.Zero && !panelWasOpen && FindPanelButtons(zoom) != null)
         {
             BringToFront(zoom);
             Thread.Sleep(150);
@@ -1309,24 +1498,32 @@ static class MeetingAV
     {
         Rectangle z = ZoomArea(zoom);
         if (z.Width < 100 || z.Height < 100) return null;
-        // The right half, top to bottom: Host tools open under the panel push its buttons up.
-        var area = Rectangle.FromLTRB(z.Left + z.Width / 2, z.Top + 60, z.Right, z.Bottom);
+        // The right half, top to bottom: Host tools open under the panel push its buttons up. A panel
+        // in a window of its own fills it.
+        bool own = ClassOf(zoom) == ZoomPopupClass;
+        var area = Rectangle.FromLTRB(own ? z.Left : z.Left + z.Width / 2, z.Top + (own ? 30 : 60), z.Right, z.Bottom);
         using (var b = new Bitmap(area.Width, area.Height))
         {
             using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
-            for (int y = b.Height - 4; y > 0; y -= 2)
-            {
-                List<int[]> row = ButtonRow(b, y);
-                if (row == null) continue;
-                // The row's middle, from the middle button's top and bottom edges (where the panel's
-                // grey starts): the bottom edge found first is just below Zoom's menu when it's open.
-                int cx = (row[1][0] + row[1][1]) / 2, top = y, bottom = y;
-                Func<Color, bool> panel = c => c.R >= 22 && c.R <= 36 && Math.Abs(c.R - c.G) < 6 && Math.Abs(c.G - c.B) < 8;
-                while (top > 0 && !panel(b.GetPixel(cx - 20, top - 1))) top--;
-                while (bottom < b.Height - 1 && !panel(b.GetPixel(cx - 20, bottom + 1))) bottom++;
-                int mid = (top + bottom) / 2;
-                return row.ConvertAll(m => new Point(area.X + (m[0] + m[1]) / 2, area.Y + mid)).ToArray();
-            }
+            return PanelButtonsIn(b, area.Location);
+        }
+    }
+
+    // The same, in a picture of that part of Zoom's window, whose top left is at "at".
+    static Point[] PanelButtonsIn(Bitmap b, Point at)
+    {
+        for (int y = b.Height - 4; y > 0; y -= 2)
+        {
+            List<int[]> row = ButtonRow(b, y);
+            if (row == null) continue;
+            // The row's middle, from the middle button's top and bottom edges (where the panel's
+            // grey starts): the bottom edge found first is just below Zoom's menu when it's open.
+            int cx = (row[1][0] + row[1][1]) / 2, top = y, bottom = y;
+            Func<Color, bool> panel = c => c.R >= 22 && c.R <= 36 && Math.Abs(c.R - c.G) < 6 && Math.Abs(c.G - c.B) < 8;
+            while (top > 0 && !panel(b.GetPixel(cx - 20, top - 1))) top--;
+            while (bottom < b.Height - 1 && !panel(b.GetPixel(cx - 20, bottom + 1))) bottom++;
+            int mid = (top + bottom) / 2;
+            return row.ConvertAll(m => new Point(at.X + (m[0] + m[1]) / 2, at.Y + mid)).ToArray();
         }
         return null;
     }
@@ -1383,7 +1580,7 @@ static class MeetingAV
     static string TwiceIfNeeded(Func<string> work, string success)
     {
         string result = work();
-        if (result.StartsWith(success) && result != "muted, but couldn't untick unmuting" || result == "no Zoom meeting open") return result;
+        if (result.StartsWith(success) && result != "muted, but couldn't untick unmuting" || result.StartsWith("no ") || result.StartsWith("nobody ")) return result;
         Thread.Sleep(600);
         return work();
     }
@@ -1410,6 +1607,9 @@ static class MeetingAV
         try
         {
             bool on;
+            // Participants or Host tools in a window of its own: Host tools is a window of its own then
+            // too (and if it's already open, its switch is all there is to do).
+            if (ZoomPopup() != IntPtr.Zero || ZoomHostTools() != IntPtr.Zero) return AllowUnmutePoppedOut(zoom, mouseAt);
             Point sw = FindUnmuteSwitchScrolling(zoom, out on);
             if (sw.IsEmpty)
             {
@@ -1467,6 +1667,68 @@ static class MeetingAV
             if (was != IntPtr.Zero && was != zoom) BringToFront(was);
         }
         return result;
+    }
+
+    // With the Participants panel in a window of its own, Host tools opens in one too
+    // ("HostToolPopupContainerWndClass"), opened from the panel's More menu, its last line (the menu
+    // read as for lowering hands). The switch is read and clicked in that window the same way.
+    static string AllowUnmutePoppedOut(IntPtr zoom, Point mouseAt)
+    {
+        bool on;
+        IntPtr tools = ZoomHostTools();
+        Point sw = Point.Empty;
+        if (tools != IntPtr.Zero) { BringToFront(tools); Thread.Sleep(300); sw = FindUnmuteSwitch(tools, out on); }
+        if (sw.IsEmpty)
+        {
+            IntPtr host;
+            Point[] buttons = OpenZoomPanel(zoom, out host);
+            if (buttons == null) return "couldn't find Zoom's Participants panel";
+            if (!ClickZoom(host, buttons[2])) return "couldn't click Zoom's More";
+            Cursor.Position = mouseAt;
+            Thread.Sleep(900);
+            Rectangle look; int[] after;
+            Rectangle menu = FindZoomMenu(out look, out after);
+            List<int> lines = menu.IsEmpty ? null : MenuLines(look, after, menu, false);
+            // Its last line is Host tools; never one in the first group (asking all to unmute).
+            if (lines == null || lines.Count < 3 || MenuLines(look, after, menu, true).Contains(lines[lines.Count - 1]))
+            {
+                keybd_event(0x1B, 0, 0, UIntPtr.Zero); keybd_event(0x1B, 0, 2, UIntPtr.Zero);
+                return "couldn't open Zoom's Host tools";
+            }
+            Click(menu.Left + menu.Width / 4, lines[lines.Count - 1]);
+            Cursor.Position = mouseAt;
+            for (int i = 0; i < 10 && tools == IntPtr.Zero; i++) { Thread.Sleep(200); tools = ZoomHostTools(); }
+            if (tools == IntPtr.Zero) return "couldn't open Zoom's Host tools";
+            BringToFront(tools);
+            Thread.Sleep(500);
+            sw = FindUnmuteSwitch(tools, out on);
+            if (sw.IsEmpty) return "couldn't find the switch in Zoom's Host tools";
+        }
+        else FindUnmuteSwitch(tools, out on);
+        if (!on)
+        {
+            if (!ClickZoom(tools, sw)) return "couldn't reach the switch";
+            Cursor.Position = mouseAt;
+            for (int i = 0; i < 10 && !on; i++)
+            {
+                Thread.Sleep(200);
+                bool now;
+                on = BlueNear(sw) || (!FindUnmuteSwitch(tools, out now).IsEmpty && now);
+            }
+        }
+        return on ? "allowed" : "couldn't switch it on";
+    }
+
+    // Host tools in a window of its own, or none.
+    static IntPtr ZoomHostTools()
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, p) =>
+        {
+            if (IsWindowVisible(h) && !IsIconic(h) && ClassOf(h) == "HostToolPopupContainerWndClass") { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
     }
 
     // Closes the Host tools pane with the ✕ at the right of its heading: under the Participants
@@ -1700,11 +1962,548 @@ static class MeetingAV
     [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 
+    // ---- Zoom's Participants panel: popped out, raised hands, the waiting room -------------------
+    // The panel can sit in Zoom's meeting window or in a window of its own ("Participants (3)"); its
+    // buttons (Invite, Mute all, More) are found the same way in either. Read by colour and clicked
+    // with the mouse, which is put back after, like the mute: Zoom shows none of it to Windows.
+
+    const string ZoomPopupClass = "ZPlistPopupContainerWndClass";
+
+    static string ClassOf(IntPtr h)
+    {
+        var c = new StringBuilder(64);
+        GetClassName(h, c, 64);
+        return c.ToString();
+    }
+
+    // The panel in a window of its own on this PC's screen, or none.
+    static IntPtr ZoomPopup()
+    {
+        Screen tv = JwTargetScreen();
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, p) =>
+        {
+            RECT r;
+            if (IsWindowVisible(h) && !IsIconic(h) && ClassOf(h) == ZoomPopupClass && GetWindowRect(h, out r) &&
+                r.Right - r.Left > 150 && r.Bottom - r.Top > 150 &&
+                (tv == null || Screen.FromHandle(h).DeviceName != tv.DeviceName)) { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    // The panel's buttons, with the window they're in (host), Zoom being in front: the panel opened
+    // with Alt+U if it's closed. Null if it can't be found. A popped-out panel that can't be read is
+    // left alone - Alt+U then would close it.
+    static Point[] OpenZoomPanel(IntPtr zoom, out IntPtr host)
+    {
+        host = ZoomPopup();
+        if (host != IntPtr.Zero)
+        {
+            BringToFront(host);
+            Thread.Sleep(250);
+            return FindPanelButtons(host);
+        }
+        host = zoom;
+        FitZoom(zoom);
+        Point[] buttons = FindPanelButtons(zoom);
+        if (buttons != null) return buttons;
+        keybd_event(0x12, 0, 0, UIntPtr.Zero);     // Alt+U: Participants
+        keybd_event(0x55, 0, 0, UIntPtr.Zero);
+        keybd_event(0x55, 0, 2, UIntPtr.Zero);
+        keybd_event(0x12, 0, 2, UIntPtr.Zero);
+        for (int i = 0; i < 10 && buttons == null; i++)
+        {
+            Thread.Sleep(200);
+            IntPtr popup = ZoomPopup();
+            if (popup != IntPtr.Zero) { host = popup; BringToFront(popup); Thread.Sleep(250); }
+            else FitZoom(zoom);
+            buttons = FindPanelButtons(host);
+        }
+        return buttons;
+    }
+
+    // Whether anyone has a hand up: the panel shows a yellow ✋ and a count above Invite.
+    static bool HandsUp(Point[] buttons)
+    {
+        int half = (buttons[1].X - buttons[0].X) / 2;
+        var area = new Rectangle(buttons[0].X - half, buttons[1].Y - 60, half + 10, 42);
+        using (var b = new Bitmap(area.Width, area.Height))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
+            int n = 0;
+            for (int y = 0; y < b.Height; y++)
+                for (int x = 0; x < b.Width; x++) { Color c = b.GetPixel(x, y); if (c.R > 230 && c.G > 150 && c.G < 225 && c.B < 110) n++; }
+            return n >= 12;
+        }
+    }
+
+    // ---- Everyone's hands lowered --------------------------------------------------------------
+    // In the panel's More menu, its first group is "Ask all to unmute" and, while anyone has a hand
+    // up or a reaction, "Clear all feedback". The menu is a window of its own - a box of the menu's
+    // grey with lines between its groups - and the second line
+    // of words in its first group is clicked, only if that group has two. In any language.
+    static string LowerZoomHands() { return OneAtATime(() => KeepingWindows(() => TwiceIfNeeded(LowerZoomHandsHere, "lowered"))); }
+
+    static string LowerZoomHandsHere()
+    {
+        IntPtr zoom = ZoomMeetingHere();
+        if (zoom == IntPtr.Zero) return "no Zoom meeting open";
+        IntPtr was = GetForegroundWindow();
+        Point mouseAt = Cursor.Position;
+        try
+        {
+            BringToFront(zoom);
+            for (int i = 0; i < 10 && GetForegroundWindow() != zoom; i++) Thread.Sleep(50);
+            if (GetForegroundWindow() != zoom) return "couldn't bring Zoom forward";
+            IntPtr host;
+            Point[] buttons = OpenZoomPanel(zoom, out host);
+            if (buttons == null) return "couldn't find Zoom's Participants panel";
+            if (!HandsUp(buttons)) return "no hands up";
+            if (!ClickZoom(host, buttons[2])) return "couldn't click Zoom's More";
+            Cursor.Position = mouseAt;   // not over the menu, which would light up a line
+            Thread.Sleep(900);
+            Rectangle look; int[] after;
+            Rectangle menu = FindZoomMenu(out look, out after);
+            List<int> lines = menu.IsEmpty ? null : MenuLines(look, after, menu, true);
+            if (lines == null || lines.Count != 2)
+            {
+                keybd_event(0x1B, 0, 0, UIntPtr.Zero); keybd_event(0x1B, 0, 2, UIntPtr.Zero);
+                return menu.IsEmpty ? "couldn't find Zoom's More menu" : "couldn't find Clear all feedback in Zoom's menu";
+            }
+            Click(menu.Left + menu.Width / 4, lines[1]);
+            Cursor.Position = mouseAt;
+            Thread.Sleep(700);
+            return HandsUp(buttons) ? "couldn't lower them" : "lowered";
+        }
+        finally
+        {
+            Cursor.Position = mouseAt;
+            if (was != IntPtr.Zero && was != zoom) BringToFront(was);
+        }
+    }
+
+    // Zoom's menus are windows of their own ("WCN_ModelessWnd"), always on top, a little bigger than
+    // the menu (its shadow). The menu inside: from the middle of the window out to its 1-pixel
+    // border (49,50,53) at each side, then up and down a column a little inside the left border
+    // (clear of the words) over the menu's grey (34,35,37) and its separator lines - the same grey
+    // as the border, but with the menu's grey past them, where past the border is the shadow. What's
+    // behind the menu, even the same grey, isn't taken for part of it. Empty if no menu is open; px
+    // is the window's part of the screen.
+    static Rectangle FindZoomMenu(out Rectangle area, out int[] px)
+    {
+        area = Rectangle.Empty; px = null;
+        IntPtr menu = IntPtr.Zero;
+        var zoom = new HashSet<uint>();
+        foreach (Process p in Process.GetProcessesByName("Zoom")) zoom.Add((uint)p.Id);
+        EnumWindows((win, l) =>
+        {
+            uint pid;
+            GetWindowThreadProcessId(win, out pid);
+            if (zoom.Contains(pid) && IsWindowVisible(win) && ClassOf(win) == "WCN_ModelessWnd") { menu = win; return false; }
+            return true;
+        }, IntPtr.Zero);
+        RECT r;
+        if (menu == IntPtr.Zero || !GetWindowRect(menu, out r) || r.Right - r.Left < 100 || r.Bottom - r.Top < 40) return Rectangle.Empty;
+        area = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+        px = Grab(area);
+        int w = area.Width, h = area.Height, midY = h / 2;
+        int[] p_ = px;
+        Func<int, int, bool> border = (x, y) => Near(p_[y * w + x], 49, 50, 53, 4);
+        Func<int, int, bool> inside = (x, y) => Near(p_[y * w + x], 34, 35, 37, 4) || border(x, y);
+        int left = -1, right = -1;
+        for (int x = 0; x < w / 2 && left < 0; x++) if (border(x, midY) && inside(x + 2, midY)) left = x;
+        for (int x = w - 1; x > w / 2 && right < 0; x--) if (border(x, midY) && inside(x - 2, midY)) right = x;
+        if (left < 0 || right < 0 || right - left < 100) return Rectangle.Empty;
+        int col = left + 11, top = midY, bottom = midY;
+        Func<int, bool> grey = y => y >= 0 && y < h && Near(p_[y * w + col], 34, 35, 37, 1);
+        Func<int, bool> line = y => y >= 0 && y < h && Near(p_[y * w + col], 49, 50, 53, 2);
+        if (!grey(midY)) return Rectangle.Empty;
+        while (true)
+        {
+            if (grey(top - 1)) top--;
+            else if (line(top - 1) && (grey(top - 2) || line(top - 2) && grey(top - 3))) top -= line(top - 2) ? 3 : 2;
+            else break;
+        }
+        while (true)
+        {
+            if (grey(bottom + 1)) bottom++;
+            else if (line(bottom + 1) && (grey(bottom + 2) || line(bottom + 2) && grey(bottom + 3))) bottom += line(bottom + 2) ? 3 : 2;
+            else break;
+        }
+        if (bottom - top < 30) return Rectangle.Empty;
+        return Rectangle.FromLTRB(area.X + left + 1, area.Y + top + 1, area.X + right, area.Y + bottom);
+    }
+
+    // A part of the screen, as one number per pixel (0xAARRGGBB), row by row.
+    static int[] Grab(Rectangle area)
+    {
+        using (var b = new Bitmap(area.Width, area.Height, PixelFormat.Format32bppArgb))
+        {
+            using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(area.Location, Point.Empty, area.Size);
+            BitmapData d = b.LockBits(new Rectangle(Point.Empty, area.Size), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            var px = new int[area.Width * area.Height];
+            for (int y = 0; y < area.Height; y++) Marshal.Copy(IntPtr.Add(d.Scan0, y * d.Stride), px, y * area.Width, area.Width);
+            b.UnlockBits(d);
+            return px;
+        }
+    }
+
+    static bool Near(int px, int r, int g, int b, int by)
+    {
+        return Math.Abs(((px >> 16) & 255) - r) <= by && Math.Abs(((px >> 8) & 255) - g) <= by && Math.Abs((px & 255) - b) <= by;
+    }
+
+    // The middles (screen y) of the lines of words in the menu, or in its first group only: above its
+    // first separator (a row mostly of the lines' grey, 49,50,53).
+    static List<int> MenuLines(Rectangle area, int[] px, Rectangle menu, bool firstGroup)
+    {
+        int w = area.Width, x0 = menu.Left - area.X + 4, x1 = menu.Right - area.X - 4;
+        var lines = new List<int>();
+        int start = -1, last = -100;
+        for (int y = menu.Top - area.Y + 2; y < menu.Bottom - area.Y; y++)
+        {
+            int sep = 0, bright = 0;
+            for (int x = x0; x < x1; x++)
+            {
+                int c = px[y * w + x];
+                if (Near(c, 49, 50, 53, 3)) sep++;
+                else if (((c >> 16) & 255) > 190 && ((c >> 8) & 255) > 190 && (c & 255) > 190) bright++;
+            }
+            if (sep * 10 >= (x1 - x0) * 7) { if (firstGroup) break; continue; }   // a separator
+            if (bright < 2) continue;
+            if (y - last > 3) { if (start >= 0) lines.Add(area.Y + (start + last) / 2); start = y; }
+            last = y;
+        }
+        if (start >= 0) lines.Add(area.Y + (start + last) / 2);
+        return lines;
+    }
+
+    // ---- The waiting room, person by person -----------------------------------------------------
+    // Zoom tells Windows nothing, not even names, so who's waiting is read from a picture of the
+    // Participants panel (taken with PrintWindow, so Zoom can be behind other windows): the waiting
+    // room heads the panel's list, its heading - a band of lighter grey - with a blue link at the
+    // right ("Message", "Admit all"); under it, a line per person, as tall as the heading, down to
+    // the next heading. Each person's line - avatar and name - is cut out and shown in Meeting AV
+    // with its own Admit. Admitting someone: their line is found again by its picture, pointed at,
+    // which shows Zoom's blue Admit button on it, and that's clicked.
+
+    class ZoomWaiter { public int Y; public long Hash; public string Png; }   // Y: the line's middle, in the window's pixels
+    static volatile List<ZoomWaiter> ZoomWaiting = new List<ZoomWaiter>();
+
+    // A picture of a whole window, even behind others; null if it can't be had.
+    static Bitmap PictureOf(IntPtr h)
+    {
+        RECT r;
+        if (!GetWindowRect(h, out r) || r.Right - r.Left < 100 || r.Bottom - r.Top < 100) return null;
+        var b = new Bitmap(r.Right - r.Left, r.Bottom - r.Top, PixelFormat.Format32bppArgb);
+        bool ok;
+        using (Graphics g = Graphics.FromImage(b)) { IntPtr dc = g.GetHdc(); ok = PrintWindow(h, dc, 2); g.ReleaseHdc(dc); }
+        if (!ok) { b.Dispose(); return null; }
+        return b;
+    }
+
+    static int[] PixelsOf(Bitmap b)
+    {
+        BitmapData d = b.LockBits(new Rectangle(Point.Empty, b.Size), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        var px = new int[b.Width * b.Height];
+        for (int y = 0; y < b.Height; y++) Marshal.Copy(IntPtr.Add(d.Scan0, y * d.Stride), px, y * b.Width, b.Width);
+        b.UnlockBits(d);
+        return px;
+    }
+
+    // The panel's list in a picture of the window it's in: its left and right, from its top to just
+    // above its buttons. Empty if the panel isn't there.
+    static Rectangle ZoomListIn(Bitmap b, bool popup)
+    {
+        var area = popup ? new Rectangle(0, 30, b.Width, b.Height - 30) : Rectangle.FromLTRB(b.Width / 2, 60, b.Width, b.Height);
+        Point[] buttons;
+        using (Bitmap part = b.Clone(area, b.PixelFormat)) buttons = PanelButtonsIn(part, area.Location);
+        if (buttons == null) return Rectangle.Empty;
+        int left = popup ? 0 : Math.Max(0, buttons[0].X - (buttons[1].X - buttons[0].X) / 2 - 8);
+        var list = Rectangle.FromLTRB(left, area.Top, b.Width, buttons[1].Y - 50);
+        return list.Width < 150 || list.Height < 60 ? Rectangle.Empty : list;
+    }
+
+    // Who's waiting, in a picture of the window the panel is in (popup: the panel's own window).
+    static List<ZoomWaiter> ZoomWaitingIn(Bitmap b, bool popup)
+    {
+        var found = new List<ZoomWaiter>();
+        Rectangle list = ZoomListIn(b, popup);
+        if (list.IsEmpty) return found;
+        int[] px = PixelsOf(b);
+        int w = b.Width;
+        Func<int, int, bool> blueWord = (x, y) => { int c = px[y * w + x]; return (c & 255) > 150 && (c & 255) - ((c >> 16) & 255) > 70; };
+        Func<int, int, bool> white = (x, y) => { int c = px[y * w + x]; return ((c >> 16) & 255) > 190 && ((c >> 8) & 255) > 190 && (c & 255) > 190; };
+        int split = list.Left + list.Width * 6 / 10;
+        Func<int, bool> words = y => { int n = 0; for (int x = list.Left; x < split; x++) if (white(x, y)) n++; return n >= 2; };
+        Func<int, int, bool> blueIn = (y0, y1) =>
+        {
+            int n = 0;
+            for (int y = y0; y < y1; y++) for (int x = split; x < list.Right; x++) if (blueWord(x, y)) n++;
+            return n >= 3;
+        };
+        // The headings: bands of a lighter grey (36,36,36) across the list - looked at around its middle,
+        // clear of the heading's words (at the left) and its link (at the right), and of the panel's
+        // edges (a docked panel has a border and a margin inside it).
+        int midA = list.Left + list.Width / 2, midB = list.Left + list.Width * 58 / 100;
+        Func<int, bool> band = y => Near(px[y * w + midA], 36, 36, 36, 3) && Near(px[y * w + midB], 36, 36, 36, 3);
+        var bands = new List<int[]>();
+        for (int y = list.Top, start = -1; y <= list.Bottom; y++)
+        {
+            bool on = y < list.Bottom && band(y);
+            if (on && start < 0) start = y;
+            else if (!on && start >= 0) { if (y - start >= 15) bands.Add(new[] { start, y }); start = -1; }
+        }
+        // The waiting room's heading has its blue link; its people are the lines of the same height
+        // under it, down to the next heading.
+        int waitingAt = bands.FindIndex(bn => blueIn(bn[0], bn[1]));
+        if (waitingAt < 0) return found;
+        int rowH = bands[waitingAt][1] - bands[waitingAt][0];
+        int end = waitingAt + 1 < bands.Count ? bands[waitingAt + 1][0] : list.Bottom;
+        for (int y = bands[waitingAt][1]; y + rowH <= end + 2; y += rowH)
+        {
+            int mid = y + rowH / 2;
+            bool named = false;
+            for (int yy = y; yy < Math.Min(end, y + rowH) && !named; yy++) named = words(yy);
+            if (!named) break;
+            // The avatar and name: the left half of the line (Admit appears on the right when pointed at).
+            var cut = Rectangle.Intersect(new Rectangle(list.Left + 6, mid - 17, list.Width * 52 / 100, 34), list);
+            long hash = 1469598103934665603;
+            for (int yy = cut.Top; yy < cut.Bottom; yy++)
+                for (int x = cut.Left; x < cut.Right; x++) hash = (hash ^ (px[yy * w + x] & 0xFFFFFF)) * 1099511628211;
+            string png;
+            using (Bitmap c = b.Clone(cut, b.PixelFormat))
+            using (var m = new MemoryStream()) { c.Save(m, ImageFormat.Png); png = Convert.ToBase64String(m.ToArray()); }
+            found.Add(new ZoomWaiter { Y = mid, Hash = hash, Png = png });
+        }
+        return found;
+    }
+
+    // Who's waiting now: read from the panel when it's open (popped out, or in the meeting's window).
+    static List<ZoomWaiter> ReadZoomWaiting()
+    {
+        IntPtr zoom = ZoomMeetingHere();
+        if (zoom == IntPtr.Zero) return new List<ZoomWaiter>();
+        IntPtr popup = ZoomPopup(), host = popup != IntPtr.Zero ? popup : zoom;
+        using (Bitmap b = PictureOf(host))
+            return b == null ? new List<ZoomWaiter>() : ZoomWaitingIn(b, popup != IntPtr.Zero);
+    }
+
+    // Someone let in: the one whose line looks like this (hash), or with 0 the first waiting.
+    static string AdmitZoom(long hash) { return OneAtATime(() => KeepingWindows(() => AdmitZoomHere(hash))); }
+
+    static string AdmitZoomHere(long hash)
+    {
+        IntPtr zoom = ZoomMeetingHere();
+        if (zoom == IntPtr.Zero) return "no Zoom meeting open";
+        IntPtr was = GetForegroundWindow();
+        Point mouseAt = Cursor.Position;
+        try
+        {
+            BringToFront(zoom);
+            for (int i = 0; i < 10 && GetForegroundWindow() != zoom; i++) Thread.Sleep(50);
+            if (GetForegroundWindow() != zoom) return "couldn't bring Zoom forward";
+            IntPtr host;
+            Point[] buttons = OpenZoomPanel(zoom, out host);
+            if (buttons == null) return "couldn't find Zoom's Participants panel";
+            bool popup = host != zoom;
+            RECT r;
+            if (!GetWindowRect(host, out r)) return "couldn't find Zoom's Participants panel";
+            List<ZoomWaiter> waiting;
+            Rectangle list;
+            using (Bitmap b = PictureOf(host))
+            {
+                if (b == null) return "couldn't see Zoom's Participants panel";
+                waiting = ZoomWaitingIn(b, popup);
+                list = ZoomListIn(b, popup);
+            }
+            if (waiting.Count == 0) return "nobody waiting";
+            ZoomWaiter who = hash == 0 ? waiting[0] : waiting.Find(x => x.Hash == hash);
+            if (who == null) return "they're no longer waiting";
+            // Pointed at, then its blue button looked for along that line.
+            int nameY = r.Top + who.Y;
+            var at = new Point(r.Left + list.Left + list.Width / 3, nameY);
+            Cursor.Position = new Point(at.X - 12, at.Y - 6);
+            Thread.Sleep(120);
+            Cursor.Position = at;
+            Thread.Sleep(500);
+            var band = new Rectangle(r.Left + list.Left, nameY - 10, list.Width, 21);
+            int[] row = Grab(band);
+            int bl = int.MaxValue, br = -1, count = 0;
+            for (int y = 0; y < band.Height; y++)
+                for (int x = 0; x < band.Width; x++)
+                {
+                    int c = row[y * band.Width + x], cr = (c >> 16) & 255, cg = (c >> 8) & 255, cb = c & 255;
+                    if (cr < 50 && cg > 85 && cg < 135 && cb > 195) { count++; bl = Math.Min(bl, x); br = Math.Max(br, x); }
+                }
+            if (count < 150 || br - bl < 30) return "couldn't find Zoom's Admit button";
+            if (!ClickZoom(host, new Point(band.X + (bl + br) / 2, nameY))) return "couldn't click Zoom's Admit button";
+            Thread.Sleep(600);
+            return "admitted";
+        }
+        finally
+        {
+            Cursor.Position = mouseAt;
+            if (was != IntPtr.Zero && was != zoom) BringToFront(was);
+        }
+    }
+
+    static int CountWhere(int n, Func<int, bool> f) { int k = 0; for (int i = 0; i < n; i++) if (f(i)) k++; return k; }
+
+    // ---- Zoom: the camera on in the meeting at start-up ------------------------------------------
+    // Whatever Zoom's "Turn off my video when joining" says, with Zoom in English or French. The video
+    // button in Zoom's toolbar tells Windows' accessibility interface what it would do - "Start my
+    // video, Alt+V" / "Démarrer ma vidéo" while the camera is off, "Stop my video" / "Arrêter ma
+    // vidéo" while it's on - and is pressed through it, so Zoom isn't made active (see ArrangeWindows).
+    // But Zoom hides its toolbar while the mouse is still, and then shows none of it: the state is read
+    // from this PC's own video tile instead ("James(Host, me), ..., Video on" / "(Hôte, moi), ...,
+    // Vidéo activée") and the camera switched on with Zoom's own key, Alt+V, Zoom brought in front for
+    // it and the window that was in front put back after. Only ever to start the camera, never to stop it.
+
+    // Zoom's meeting window on this PC's screen, never its window on the hall's TV.
+    static IntPtr ZoomMeetingHere()
+    {
+        Screen tv = JwTargetScreen();
+        IntPtr zoom = IntPtr.Zero;
+        EnumWindows((h, p) =>
+        {
+            var c = new StringBuilder(64);
+            GetClassName(h, c, 64);
+            if (c.ToString() == "ConfMultiTabContentWndClass" && IsWindowVisible(h) &&
+                (tv == null || Screen.FromHandle(h).DeviceName != tv.DeviceName)) { zoom = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return zoom;
+    }
+
+    // The video button in a window of Zoom's (its meeting, or the video preview before joining), with
+    // what it says: "on", "off", or null if it isn't there or its language isn't known.
+    static AutomationElement ZoomVideoButton(AutomationElement window, out string state)
+    {
+        state = null;
+        foreach (AutomationElement b in window.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+        {
+            string n = b.Current.Name.Trim().ToLowerInvariant();
+            if (!n.Contains("alt+v") && !n.StartsWith("start video") && !n.StartsWith("stop video")) continue;
+            state = StartsWithAny(n, "stop", "arrêter", "arreter") ? "on" : StartsWithAny(n, "start", "démarrer", "demarrer") ? "off" : null;
+            if (state != null) return b;
+        }
+        return null;
+    }
+
+    // The camera: from the toolbar's button if it's showing (button set), or else this PC's video tile.
+    static string ZoomCameraState(IntPtr zoom, out AutomationElement button)
+    {
+        AutomationElement w = AutomationElement.FromHandle(zoom);
+        string state;
+        button = ZoomVideoButton(w, out state);
+        if (state != null) return state;
+        foreach (AutomationElement t in w.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ClassNameProperty, "VideoRenderWndClass")))
+        {
+            string n = t.Current.Name.ToLowerInvariant();
+            if (!Regex.IsMatch(n, @"\((?:[^()]*,\s*)?(me|moi)\)")) continue;
+            return Regex.IsMatch(n, "vidéo activée|video on") ? "on" : Regex.IsMatch(n, "vidéo désactivée|video off") ? "off" : null;
+        }
+        return null;
+    }
+
+    static bool StartsWithAny(string s, params string[] starts)
+    {
+        foreach (string p in starts) if (s.StartsWith(p)) return true;
+        return false;
+    }
+
+    static string ZoomCameraOn()
+    {
+        IntPtr zoom = ZoomMeetingHere();
+        if (zoom == IntPtr.Zero) return "couldn't find Zoom's meeting";
+        // Zoom shows the camera's state once it has connected, which can take a while.
+        for (int i = 0; i < 20; i++)
+        {
+            AutomationElement button;
+            string state = ZoomCameraState(zoom, out button);
+            if (state == "on") return i == 0 ? "already on" : "on";
+            if (state == "off")
+            {
+                object pattern;
+                if (button != null && button.TryGetCurrentPattern(InvokePattern.Pattern, out pattern)) ((InvokePattern)pattern).Invoke();
+                else
+                {
+                    // The toolbar hidden: Zoom's key for it, pressed only with Zoom really in front.
+                    IntPtr was = GetForegroundWindow();
+                    BringToFront(zoom);
+                    for (int j = 0; j < 10 && GetForegroundWindow() != zoom; j++) Thread.Sleep(50);
+                    if (GetForegroundWindow() != zoom) return "couldn't bring Zoom forward";
+                    keybd_event(0x12, 0, 0, UIntPtr.Zero);   // Alt+V
+                    keybd_event(0x56, 0, 0, UIntPtr.Zero);
+                    keybd_event(0x56, 0, 2, UIntPtr.Zero);
+                    keybd_event(0x12, 0, 2, UIntPtr.Zero);
+                    Thread.Sleep(300);
+                    if (was != IntPtr.Zero && was != zoom) BringToFront(was);
+                }
+                for (int j = 0; j < 10; j++)
+                {
+                    Thread.Sleep(300);
+                    if (ZoomCameraState(zoom, out button) == "on") return "on";
+                }
+                return "couldn't switch it on";   // pressed once only: a second press could turn it off
+            }
+            Thread.Sleep(1000);
+        }
+        // What Zoom does show, for finding the button in a Zoom that names it differently.
+        try
+        {
+            var names = new List<string>();
+            foreach (AutomationElement e in AutomationElement.FromHandle(zoom).FindAll(TreeScope.Descendants, Condition.TrueCondition))
+                if (e.Current.Name != "") names.Add(e.Current.ControlType.ProgrammaticName + " | " + e.Current.Name + " | " + e.Current.ClassName);
+            File.WriteAllLines(Path.Combine(DataDir, "zoom-buttons.txt"), names.ToArray());
+        }
+        catch { }
+        return "couldn't find Zoom's video button";
+    }
+
+    // With "Always show video preview" ticked in Zoom, joining waits in a preview of the camera: its
+    // camera is switched on there, then Join pressed ("Join with Video" in older Zoom; "Rejoindre").
+    static void JoinFromPreview()
+    {
+        var zoomPids = new HashSet<uint>();
+        foreach (Process p in Process.GetProcessesByName("Zoom")) zoomPids.Add((uint)p.Id);
+        if (zoomPids.Count == 0) return;
+        var windows = new List<IntPtr>();
+        EnumWindows((h, p) =>
+        {
+            uint pid;
+            var c = new StringBuilder(64);
+            GetClassName(h, c, 64);
+            string cls = c.ToString();
+            if (IsWindowVisible(h) && GetWindowThreadProcessId(h, out pid) != 0 && zoomPids.Contains(pid) &&
+                cls != "ConfMultiTabContentWndClass" && cls != "ZPPTMainFrmWndClassEx") windows.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        foreach (IntPtr h in windows)
+        {
+            AutomationElement w = AutomationElement.FromHandle(h);
+            AutomationElement join = null;
+            foreach (AutomationElement b in w.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+            {
+                string n = b.Current.Name.Trim().ToLowerInvariant();
+                if (n == "join with video" || n == "rejoindre avec la vidéo") { join = b; break; }
+                if (n == "join" || n == "rejoindre") join = b;
+            }
+            if (join == null) continue;
+            string camState;
+            AutomationElement video = ZoomVideoButton(w, out camState);
+            if (video != null && camState == "off") { Press(video); Thread.Sleep(800); }
+            Press(join);
+            return;
+        }
+    }
+
     // ---- The hall's TV: JW Library, or Zoom's second window --------------------------------------
     // Zoom in "dual monitors" mode keeps its second window (the gallery) on the screen JW Library
     // uses, under JW Library's own. Showing Zoom there switches JW Library's second display off and
-    // brings that window up (never made active, which JW Library reacts to); showing JW Library
-    // switches its display back on.
+    // brings that window up, full screen; showing JW Library switches its display back on.
 
     static volatile bool TvShowsZoom;
 
@@ -1717,12 +2516,45 @@ static class MeetingAV
             if (z == IntPtr.Zero) return false;   // no Zoom window on that screen
             if (JwRunning() && !JwSetSecondDisplay(false, false)) return false;
             SetWindowPos(z, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);   // to the front, not active
+            ZoomFullScreen(z, tv);
             TvShowsZoom = true;
             return true;
         }
         if (JwRunning() && !JwSetSecondDisplay(true, false)) return false;
         TvShowsZoom = false;
         return true;
+    }
+
+    // Zoom's window on the TV filling it, without its title bar and toolbar: Zoom's own full screen
+    // (Alt+F), with the window in front for the key (JW Library's display is off by then, so a window
+    // on that screen being active doesn't matter), and the window that was in front put back. If
+    // Zoom doesn't go full screen, the window is stretched over the whole TV instead.
+    static void ZoomFullScreen(IntPtr z, Screen tv)
+    {
+        Func<bool> full = () =>
+        {
+            RECT r;
+            return GetWindowRect(z, out r) && r.Left <= tv.Bounds.Left && r.Top <= tv.Bounds.Top &&
+                   r.Right >= tv.Bounds.Right && r.Bottom >= tv.Bounds.Bottom;
+        };
+        if (full()) return;
+        IntPtr was = GetForegroundWindow();
+        BringToFront(z);
+        for (int i = 0; i < 10 && GetForegroundWindow() != z; i++) Thread.Sleep(50);
+        if (GetForegroundWindow() == z)
+        {
+            keybd_event(0x12, 0, 0, UIntPtr.Zero);     // Alt+F: Zoom's full screen
+            keybd_event(0x46, 0, 0, UIntPtr.Zero);
+            keybd_event(0x46, 0, 2, UIntPtr.Zero);
+            keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            for (int i = 0; i < 15 && !full(); i++) Thread.Sleep(100);
+        }
+        if (!full())
+        {
+            if (IsZoomed(z)) ShowWindow(z, 9);
+            SetWindowPos(z, IntPtr.Zero, tv.Bounds.X, tv.Bounds.Y, tv.Bounds.Width, tv.Bounds.Height, 0x0010);
+        }
+        if (was != IntPtr.Zero && was != z) BringToFront(was);
     }
 
     // ---- Arranging the PC's screen: Meeting AV on the left, JW Library and Zoom on the right ----
@@ -1738,7 +2570,7 @@ static class MeetingAV
         // Running but its window not found: it's changing page (or still starting), so it's looked for again.
         for (int i = 0; i < 5 && jw == IntPtr.Zero; i++)
         {
-            try { lock (JwLock) { AutomationElement w = JwMainWindow(); if (w != null) jw = new IntPtr(w.Current.NativeWindowHandle); } } catch { }
+            try { lock (JwLock) { AutomationElement w = JwMainWindowRestored(); if (w != null) jw = new IntPtr(w.Current.NativeWindowHandle); } } catch { }
             if (jw == IntPtr.Zero) { if (!JwRunning()) break; Thread.Sleep(1000); }
         }
         // Zoom's meeting window on this screen - in "dual monitors" mode it has a second one on the
@@ -1816,6 +2648,7 @@ static class MeetingAV
     [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT value, int size);
 
@@ -1833,49 +2666,55 @@ static class MeetingAV
         while (true)
         {
             Thread.Sleep(2000);
-            bool running = JwRunning();
-            if (running && !wasRunning)
+            bool running = wasRunning;
+            // JW Library or Zoom closing a window just as it's looked at: tried again next time round.
+            try
             {
-                JwStarting = true;
-                try
+                running = JwRunning();
+                if (running && !wasRunning)
                 {
-                    for (int i = 0; i < 30 && JwMainWindow() == null; i++) Thread.Sleep(1000);
-                    Thread.Sleep(3000);   // its first page settles
-                    // Still busy starting (checking for new publications, opening its second display),
-                    // it can miss the first try.
-                    for (int i = 0; i < 3 && OneAtATime(() => JwOpenMeetings() ? "ok" : "") != "ok"; i++) Thread.Sleep(3000);
+                    JwStarting = true;
+                    try
+                    {
+                        for (int i = 0; i < 30 && JwMainWindow() == null; i++) Thread.Sleep(1000);
+                        Thread.Sleep(3000);   // its first page settles
+                        // Still busy starting (checking for new publications, opening its second display),
+                        // it can miss the first try.
+                        for (int i = 0; i < 3 && OneAtATime(() => JwOpenMeetings() ? "ok" : "") != "ok"; i++) Thread.Sleep(3000);
+                    }
+                    finally { JwStarting = false; }
                 }
-                finally { JwStarting = false; }
-            }
-            if (!running && JwDisplayOff && !JwBusy) { JwDisplayOff = false; try { File.Delete(JwOffFile); } catch { } }
-            // Zoom's window on the hall TV closing (the meeting ended, or Zoom quit) takes JW Library's
-            // picture there away with it, leaving the desktop: JW Library's second display is switched
-            // off and on a few seconds later, which brings it back.
-            Screen tvScreen = JwTargetScreen();
-            // JW Library opened its second display while the TV wasn't connected (or was asleep), so
-            // it's a window on the PC's screen and the TV shows the desktop. With a TV, JW Library fills
-            // it instead of opening a window: switched off and on, it goes there. Not more than once a
-            // minute, in case it keeps the window.
-            bool quiet = !JwDisplayOff && !JwBusy && !JwStarting && JwNavigating == 0 && !TvShowsZoom && (CountdownForm == null || CountdownForm.IsDisposed);
-            jwInWindow = running && tvScreen != null && quiet && FindJwSecondDisplay() != IntPtr.Zero ? jwInWindow + 1 : 0;
-            if (jwInWindow >= 2 && DateTime.Now - jwRefittedAt > TimeSpan.FromMinutes(1))
-            {
-                jwRefittedAt = DateTime.Now;
-                jwInWindow = 0;
-                if (JwSetSecondDisplay(false, false)) { Thread.Sleep(500); JwSetSecondDisplay(true, false); }
-            }
-            bool zoomOnTv = tvScreen != null && FindTopWindow("ConfMultiTabContentWndClass", tvScreen) != IntPtr.Zero;
-            if (zoomWasOnTv && !zoomOnTv) zoomLeftAt = DateTime.Now;
-            zoomWasOnTv = zoomOnTv;
-            if (zoomLeftAt != DateTime.MinValue && DateTime.Now - zoomLeftAt > TimeSpan.FromSeconds(3))
-            {
-                if (running && !JwDisplayOff && !JwBusy && JwNavigating == 0 && (CountdownForm == null || CountdownForm.IsDisposed))
+                if (!running && JwDisplayOff && !JwBusy) { JwDisplayOff = false; try { File.Delete(JwOffFile); } catch { } }
+                // Zoom's window on the hall TV closing (the meeting ended, or Zoom quit) takes JW Library's
+                // picture there away with it, leaving the desktop: JW Library's second display is switched
+                // off and on a few seconds later, which brings it back.
+                Screen tvScreen = JwTargetScreen();
+                // JW Library opened its second display while the TV wasn't connected (or was asleep), so
+                // it's a window on the PC's screen and the TV shows the desktop. With a TV, JW Library fills
+                // it instead of opening a window: switched off and on, it goes there. Not more than once a
+                // minute, in case it keeps the window.
+                bool quiet = !JwDisplayOff && !JwBusy && !JwStarting && JwNavigating == 0 && !TvShowsZoom && (CountdownForm == null || CountdownForm.IsDisposed);
+                jwInWindow = running && tvScreen != null && quiet && FindJwSecondDisplay() != IntPtr.Zero ? jwInWindow + 1 : 0;
+                if (jwInWindow >= 2 && DateTime.Now - jwRefittedAt > TimeSpan.FromMinutes(1))
                 {
-                    TvShowsZoom = false;
+                    jwRefittedAt = DateTime.Now;
+                    jwInWindow = 0;
                     if (JwSetSecondDisplay(false, false)) { Thread.Sleep(500); JwSetSecondDisplay(true, false); }
                 }
-                zoomLeftAt = DateTime.MinValue;
+                bool zoomOnTv = tvScreen != null && FindTopWindow("ConfMultiTabContentWndClass", tvScreen) != IntPtr.Zero;
+                if (zoomWasOnTv && !zoomOnTv) zoomLeftAt = DateTime.Now;
+                zoomWasOnTv = zoomOnTv;
+                if (zoomLeftAt != DateTime.MinValue && DateTime.Now - zoomLeftAt > TimeSpan.FromSeconds(3))
+                {
+                    if (running && !JwDisplayOff && !JwBusy && JwNavigating == 0 && (CountdownForm == null || CountdownForm.IsDisposed))
+                    {
+                        TvShowsZoom = false;
+                        if (JwSetSecondDisplay(false, false)) { Thread.Sleep(500); JwSetSecondDisplay(true, false); }
+                    }
+                    zoomLeftAt = DateTime.MinValue;
+                }
             }
+            catch (Exception e) { Log("JW Library start: " + e.Message); }
             wasRunning = running;
         }
     }
@@ -2000,6 +2839,11 @@ static class MeetingAV
                 float level, peak; bool mute;
                 volume.GetMasterVolumeLevelScalar(out level); volume.GetMute(out mute); meter.GetPeakValue(out peak);
                 json.Append(AudioLevel(level, mute, peak));
+                // Which they are: set to VB-CABLE by mistake, nothing comes out of the hall's speakers.
+                string name = "";
+                try { string id; speakers.GetId(out id); string[] named = AudioDevices(0).Find(d => d[0] == id); if (named != null) name = named[1]; }
+                catch { }
+                json.Append(",\"speakersName\":" + Json(name));
             }
             catch { json.Append("null"); }   // no speakers
             // The microphone: Windows' default recording device (what Zoom uses unless told otherwise).
@@ -2385,7 +3229,8 @@ static class MeetingAV
     {
         while (true)
         {
-            if (DateTime.Now - JwStateAskedAt < TimeSpan.FromSeconds(5)) JwMedia = JwMediaOpen();
+            try { if (DateTime.Now - JwStateAskedAt < TimeSpan.FromSeconds(5)) JwMedia = JwMediaOpen(); }
+            catch (Exception e) { Log("JW Library media: " + e.Message); Thread.Sleep(1000); }
             Thread.Sleep(100);
         }
     }
@@ -2443,11 +3288,13 @@ static class MeetingAV
         }
     }
 
-    // A video's play/pause button, the picture viewer, and the top bar every normal page has.
+    // A video's play/pause button, the picture viewer, and the top bar every normal page has - but a
+    // playlist's page has its list instead (which goes while one of its items is showing).
     static readonly Condition MediaMarkers = new OrCondition(
         new PropertyCondition(AutomationElement.AutomationIdProperty, "TogglePlaybackButton"),
         new PropertyCondition(AutomationElement.AutomationIdProperty, "ImageRenderer"),
-        new PropertyCondition(AutomationElement.AutomationIdProperty, "TopCommandBar"));
+        new PropertyCondition(AutomationElement.AutomationIdProperty, "TopCommandBar"),
+        new PropertyCondition(AutomationElement.AutomationIdProperty, "List"));
 
     // With extra screens, JW Library fills one of them instead of opening a window: the only extra
     // screen, or with several, the one named in this file (put a name like \\.\DISPLAY2 in it).
@@ -2517,6 +3364,575 @@ static class MeetingAV
                 }
             }
             catch { JwWindow = IntPtr.Zero; return null; }
+        }
+    }
+
+    // ---- JW Library and Zoom, live, in Meeting AV's window ---------------------------
+    // The page leaves a box for each and says where it is (in the window's pixels); Windows' own
+    // thumbnails (as in the taskbar's previews) show the program's window there, moving as it does,
+    // whatever is in front of it. Only to be seen: clicking a box brings that program to the front.
+    // The page leaves out a box something of its own covers (a menu, a dialog, a note), as the
+    // thumbnail is drawn over the page. A minimised window can't be shown: the page says so instead.
+    // Each shows the part that matters: JW Library its page (not its title bar and side menu), Zoom
+    // its side panel (Participants) when that's open.
+
+    static readonly LiveView JwView = new LiveView(), ZoomView = new LiveView();
+    static System.Windows.Forms.Timer ViewsTimer;
+    static string ViewsState = "";
+
+    static void OnPageMessage(string message)
+    {
+        if (message.StartsWith("views"))
+        {
+            JwView.Box = Box(message, "jw");
+            ZoomView.Box = Box(message, "zoom");
+            if (ViewsTimer == null)
+            {
+                ViewsTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+                ViewsTimer.Tick += (s, e) => UpdateViews();
+                ViewsTimer.Start();
+                Background("live views", FindViewSources);
+            }
+            if (message == "views?") { ViewsState = ""; UpdateViews(); }   // the page (re)loaded: told the state again
+            else if (Window != null && !Window.IsDisposed && Window.IsHandleCreated)
+            {
+                // Just moved (the page scrolled or changed): only the pictures follow, straight away.
+                JwView.Update(Window);
+                ZoomView.Update(Window);
+            }
+        }
+        else if (message == "bring jw" || message == "bring zoom")
+        {
+            IntPtr h = message == "bring jw" ? JwMainHandle : ZoomView.Source;
+            if (h == IntPtr.Zero && message == "bring zoom") h = FindWindow("ZPPTMainFrmWndClassEx", null);   // not in a meeting: its home window
+            if (h == IntPtr.Zero) return;
+            Background("bringing a window", () =>
+            {
+                if (IsIconic(h)) ShowWindow(h, 9);   // restored
+                BringToFront(h);
+            });
+        }
+    }
+
+    static Rectangle Box(string message, string name)
+    {
+        Match m = Regex.Match(message, @"\b" + name + @"=(-?\d+),(-?\d+),(\d+),(\d+)");
+        if (!m.Success) return Rectangle.Empty;
+        return new Rectangle(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value), int.Parse(m.Groups[3].Value), int.Parse(m.Groups[4].Value));
+    }
+
+    // Every second: the thumbnails kept up with their windows, and the page told when one closes,
+    // is minimised or comes back.
+    static void UpdateViews()
+    {
+        if (Window == null || Window.IsDisposed || !Window.IsHandleCreated) return;
+        JwView.Update(Window);
+        ZoomView.Update(Window);
+        bool zoomRunning = Process.GetProcessesByName("Zoom").Length > 0;
+        var items = new StringBuilder();
+        foreach (JwItem it in JwItems)
+            items.Append(items.Length == 0 ? "" : ",").Append("{\"n\":" + Json(it.Name) + ",\"t\":" + Json(it.Title) + ",\"g\":" + Json(it.Group) +
+                                                             ",\"k\":" + Json(it.Kind) + ",\"l\":" + Json(it.Length) + ",\"s\":" + (it.Saved ? "true" : "false") + "}");
+        string state = "{\"type\":\"views\",\"jw\":" + Json(JwView.State(JwRunning() ? "opening" : "closed")) +
+                       ",\"zoom\":" + Json(ZoomView.State(zoomRunning ? "none" : "closed")) +
+                       ",\"jwItems\":[" + items + "],\"jwOpen\":" + Json(JwViewer) + ",\"jwShowing\":" + Json(JwShowing) +
+                       ",\"zoomPanel\":" + (ZoomPanelOpen ? "true" : "false") + ",\"jwOnTv\":" + (JwOnTv ? "true" : "false") +
+                       ",\"zoomWaiting\":[" + string.Join(",", ZoomWaiting.ConvertAll(x => "{\"h\":\"" + x.Hash + "\",\"img\":\"" + x.Png + "\"}")) + "]}";
+        if (state != ViewsState) { ViewsState = state; Window.Post(state); }
+    }
+
+    // Which windows to show, looked for in the background (finding JW Library's takes a moment).
+    static void FindViewSources()
+    {
+        while (true)
+        {
+            try
+            {
+                IntPtr jw = JwMainHandle;
+                if (jw == IntPtr.Zero || !IsWindow(jw))
+                {
+                    jw = IntPtr.Zero;
+                    if (JwRunning() && Monitor.TryEnter(JwLock, 0))
+                        try
+                        {
+                            AutomationElement w = JwMainWindow();
+                            if (w != null) jw = new IntPtr(w.Current.NativeWindowHandle);
+                            else if (JwMainSeen != IntPtr.Zero && IsWindow(JwMainSeen)) jw = JwMainSeen;   // minimised
+                            else
+                                // Minimised, its menu can't be seen: the minimised one of its windows.
+                                foreach (AutomationElement named in AutomationElement.RootElement.FindAll(TreeScope.Children,
+                                             new PropertyCondition(AutomationElement.NameProperty, "JW Library")))
+                                    if (IsIconic(new IntPtr(named.Current.NativeWindowHandle))) jw = new IntPtr(named.Current.NativeWindowHandle);
+                        }
+                        finally { Monitor.Exit(JwLock); }
+                    JwMainHandle = jw;
+                }
+                // JW Library minimised can't be shown (Windows draws nothing of a minimised window): its
+                // second display - what's on the TV - is shown instead, while that's up.
+                IntPtr tv = jw != IntPtr.Zero && IsIconic(jw) ? FindJwSecondDisplay() : IntPtr.Zero;
+                JwView.Source = tv != IntPtr.Zero ? tv : jw;
+                JwOnTv = tv != IntPtr.Zero;
+                // Zoom: its Participants panel when that's in a window of its own, else its meeting.
+                IntPtr zoom = ZoomMeetingHere(), popup = zoom == IntPtr.Zero ? IntPtr.Zero : ZoomPopup();
+                ZoomView.Source = popup != IntPtr.Zero ? popup : zoom;
+                // What JW Library has open, its page's media, and the part of each window to show.
+                JwViewer = DateTime.Now - JwStateAskedAt < TimeSpan.FromSeconds(5) ? JwMedia : JwMediaOpen();
+                Rectangle jwCrop = Rectangle.Empty;
+                if (jw != IntPtr.Zero && !IsIconic(jw) && JwNavigating == 0)
+                {
+                    AutomationElement w = AutomationElement.FromHandle(jw);
+                    List<JwItem> items = JwMediaItems(w).ConvertAll(x => x.Key);
+                    // While a picture or video is open the page's list can be hidden: the last one is kept,
+                    // and only let go once JW Library, asked afresh, has nothing open.
+                    if (items.Count > 0 || JwMediaOpen() == "none") JwItems = items;
+                    jwCrop = JwPageArea(w, jw);
+                }
+                else if (jw == IntPtr.Zero) JwItems = new List<JwItem>();
+                if (JwViewer == "none" || jw == IntPtr.Zero) JwShowing = "";
+                Rectangle zoomCrop = zoom == IntPtr.Zero || IsIconic(zoom) || popup != IntPtr.Zero ? Rectangle.Empty : ZoomSidePanel(zoom);
+                ZoomPanelOpen = popup != IntPtr.Zero || !zoomCrop.IsEmpty;
+                ZoomWaiting = ZoomPanelOpen ? ReadZoomWaiting() : new List<ZoomWaiter>();
+                OnUi(() => { JwView.Crop = jwCrop; ZoomView.Crop = zoomCrop; });
+            }
+            catch (Exception e) { Log("live views: " + e.Message); }
+            Thread.Sleep(2000);
+        }
+    }
+
+    // ---- What can be done under the views -----------------------------------------------------
+    // Under JW Library: a button for each picture and video on the page it's on (this week's
+    // meeting media, its songs too), which shows it on the TV, and Stop, which closes the one open.
+    // Pressed through Windows' accessibility interface, so the mouse and keyboard are left alone.
+    // Under Zoom: its Participants panel opened or closed, and the mics switch.
+
+    class JwItem { public string Name, Title, Group, Kind, Length; public bool Saved = true; }
+    static volatile List<JwItem> JwItems = new List<JwItem>();
+    static volatile string JwViewer = "none";   // what JW Library has open, as JwMediaOpen says
+    static volatile string JwShowing = "";      // the item last shown from here, while something is open
+    static volatile bool ZoomPanelOpen;
+    static volatile IntPtr JwMainHandle;   // JW Library's main window (minimised or not), or none
+    static volatile bool JwOnTv;           // the JW Library picture shows its second display (the main window's minimised)
+
+    static readonly Condition JwGrids = new OrCondition(
+        new PropertyCondition(AutomationElement.AutomationIdProperty, "LibraryItemsGrid"),   // the songs
+        new PropertyCondition(AutomationElement.AutomationIdProperty, "MediaItemsGrid"),     // pictures and videos, under their headings
+        new PropertyCondition(AutomationElement.AutomationIdProperty, "List"));              // a playlist's items (and other lists: see below)
+    // A video says what it is and how long: '125. "Happy Are the Merciful" Videos. Duration 2:50.'
+    // (in French "Vidéos. Durée 2:50.").
+    static readonly Regex JwVideoName = new Regex(@"^(.*?)\s+[^\s.]+\.\s+[^\s.]+\s+(\d+:\d\d(?::\d\d)?)\.?\s*$");
+    static readonly Regex JwLength = new Regex(@"^\d+:\d\d(?::\d\d)?$");
+    static readonly Condition JwCard = new PropertyCondition(AutomationElement.AutomationIdProperty, "CardView");
+
+    // The media on JW Library's page, in order, each with its element; none when the page has none.
+    // Only those JW Library has made so far: a long list makes the rest as it's scrolled.
+    static List<KeyValuePair<JwItem, AutomationElement>> JwMediaItems(AutomationElement w)
+    {
+        var found = new List<KeyValuePair<JwItem, AutomationElement>>();
+        TreeWalker walk = TreeWalker.ControlViewWalker;
+        Action<AutomationElement, string> add = (el, group) =>
+        {
+            string name = el.Current.Name.Trim();
+            if (name == "") return;
+            Match v = JwVideoName.Match(name);
+            found.Add(new KeyValuePair<JwItem, AutomationElement>(new JwItem
+            {
+                Name = name, Group = group, Kind = v.Success ? "video" : "image",
+                Title = v.Success ? v.Groups[1].Value : name, Length = v.Success ? v.Groups[2].Value : "",
+                Saved = JwDownloadButton(el) == null,
+            }, el));
+        };
+        foreach (AutomationElement grid in w.FindAll(TreeScope.Descendants, JwGrids))
+            if (grid.Current.AutomationId == "List") JwPlaylistItems(grid, found);
+            else for (AutomationElement c = walk.GetFirstChild(grid); c != null; c = walk.GetNextSibling(c))
+            {
+                if (c.Current.ControlType == ControlType.ListItem) add(c, "");
+                else if (c.Current.ControlType == ControlType.Group)
+                {
+                    string group = c.Current.Name.Trim();
+                    for (AutomationElement it = walk.GetFirstChild(c); it != null; it = walk.GetNextSibling(it))
+                        if (it.Current.ControlType == ControlType.ListItem) add(it, group);
+                }
+            }
+        return found;
+    }
+
+    // A playlist: each item a card, its name the item's, with a length if it's a video ("2:34"). Only
+    // items with a card - not "Import a file" at the end, nor a list of something else.
+    static void JwPlaylistItems(AutomationElement list, List<KeyValuePair<JwItem, AutomationElement>> found)
+    {
+        TreeWalker walk = TreeWalker.ControlViewWalker;
+        for (AutomationElement it = walk.GetFirstChild(list); it != null; it = walk.GetNextSibling(it))
+        {
+            if (it.Current.ControlType != ControlType.ListItem) continue;
+            AutomationElement card = it.FindFirst(TreeScope.Children, JwCard);
+            string name = it.Current.Name.Trim();
+            if (card == null || name == "") continue;
+            string length = "";
+            foreach (AutomationElement t in card.FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)))
+                if (JwLength.IsMatch(t.Current.Name.Trim())) { length = t.Current.Name.Trim(); break; }
+            found.Add(new KeyValuePair<JwItem, AutomationElement>(new JwItem
+            {
+                Name = name, Group = "", Kind = length != "" ? "video" : "image", Title = name, Length = length,
+                Saved = JwDownloadButton(it) == null,
+            }, it));
+        }
+    }
+
+    // ---- The page's media downloaded, in the best quality ------------------------------------------
+    // An item not yet downloaded has a Download button (no id in a meeting's media, "InstallationState
+    // Button" in a playlist); pressed, it offers the qualities ("720p", "480p"...), each a menu item
+    // whose id is the quality, and the highest is chosen. Only a button called Download is pressed:
+    // while downloading, the same button cancels.
+    static readonly Regex JwDownloadName = new Regex("^(Download|T\u00e9l\u00e9charger|Descargar|Baixar|Transferir|Herunterladen|Scarica|Downloaden|Pobierz|\u0421\u043a\u0430\u0447\u0430\u0442\u044c)$", RegexOptions.IgnoreCase);
+    static readonly Regex JwQuality = new Regex(@"^(\d{3,4})p$");
+
+    static AutomationElement JwDownloadButton(AutomationElement item)
+    {
+        foreach (AutomationElement b in item.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+        {
+            string id = b.Current.AutomationId;
+            if ((id == "" || id == "InstallationStateButton") && JwDownloadName.IsMatch(b.Current.Name.Trim())) return b;
+        }
+        return null;
+    }
+
+    // Downloads what's on JW Library's page (this week's meeting media first, if the page has none):
+    // how many downloads were started, -1 if JW Library couldn't be reached, -3 if it's showing
+    // something (which going to the meeting's media would take off the TV).
+    static int JwDownloadAll()
+    {
+        lock (JwLock)
+        {
+            AutomationElement w = JwMainWindowRestored();
+            if (w == null) return -1;
+            if (JwMediaItems(w).Count == 0)
+            {
+                // Something showing on the TV hides the list: never taken off to download.
+                string open = JwMediaOpen();
+                if (open == "image" || open == "video" || open == "unknown") return -3;
+                if (!JwOpenMeetings()) return -1;
+                Thread.Sleep(1000);
+            }
+            int started = 0;
+            foreach (KeyValuePair<JwItem, AutomationElement> it in JwMediaItems(w))
+            {
+                try
+                {
+                    AutomationElement b = JwDownloadButton(it.Value);
+                    if (b == null) continue;
+                    object p;
+                    if (it.Value.TryGetCurrentPattern(ScrollItemPattern.Pattern, out p)) ((ScrollItemPattern)p).ScrollIntoView();
+                    Press(b);
+                    // The qualities offered: the highest chosen. None (a single file): it's started already.
+                    AutomationElement best = null;
+                    int bestP = 0;
+                    WaitFor(() =>
+                    {
+                        foreach (AutomationElement m in w.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem)))
+                        {
+                            Match q = JwQuality.Match(m.Current.AutomationId);
+                            if (q.Success && int.Parse(q.Groups[1].Value) > bestP) { best = m; bestP = int.Parse(q.Groups[1].Value); }
+                        }
+                        return best;
+                    }, 1500);
+                    if (best != null) Press(best);
+                    started++;
+                    Thread.Sleep(400);
+                }
+                catch (Exception e) { Log("JW Library download: " + e.Message); }
+            }
+            JwMain = null;
+            return started;
+        }
+    }
+
+    // Plays one of the page's items. Meeting media can be pressed through the accessibility interface;
+    // a playlist's items can't (and Enter doesn't play them), so its picture is clicked: JW Library
+    // brought in front for it (only clicked if it really is), then the mouse and the window that was
+    // in front put back.
+    static bool JwPress(AutomationElement item, IntPtr jw)
+    {
+        object p;
+        if (item.TryGetCurrentPattern(InvokePattern.Pattern, out p))
+        {
+            IntPtr front = GetForegroundWindow();
+            HoldFront();
+            ((InvokePattern)p).Invoke();
+            KeepInFront(front, jw);
+            return true;
+        }
+        if (item.TryGetCurrentPattern(ScrollItemPattern.Pattern, out p)) { ((ScrollItemPattern)p).ScrollIntoView(); Thread.Sleep(250); }
+        System.Windows.Rect r = item.Current.BoundingRectangle;
+        if (r.IsEmpty || r.Width < 60 || r.Height < 30) return false;
+        IntPtr was = GetForegroundWindow();
+        Point mouseAt = Cursor.Position;
+        try
+        {
+            if (GetForegroundWindow() != jw) { BringToFront(jw); Thread.Sleep(300); }
+            if (GetForegroundWindow() != jw) return false;
+            // The picture, at the card's left: clear of its Stop tick and its menu.
+            Click((int)r.Left + (int)Math.Min(50, r.Width / 6), (int)(r.Top + r.Height / 2));
+            Thread.Sleep(400);
+            return true;
+        }
+        finally
+        {
+            Cursor.Position = mouseAt;
+            if (was != IntPtr.Zero && was != jw) BringToFront(was);
+        }
+    }
+
+    // Opening or closing media, JW Library makes itself the active window. Meeting AV, in front when
+    // its button is clicked, first stops other programs taking the front (Windows' own lock, while
+    // JW Library is pressed); should JW Library get there all the same, whatever was in front is put
+    // back each time it does, for the next 3 seconds.
+    static void HoldFront() { LockSetForegroundWindow(1); }
+
+    static void KeepInFront(IntPtr front, IntPtr jw)
+    {
+        try
+        {
+            if (front == IntPtr.Zero || front == jw) return;
+            // Looked at often, so a moment in front is too short to notice. Any of JW Library's
+            // windows counts: its second display can make itself active too.
+            var title = new StringBuilder(32);
+            for (DateTime until = DateTime.Now.AddSeconds(3); DateTime.Now < until; Thread.Sleep(15))
+            {
+                IntPtr now = GetForegroundWindow();
+                if (now == front || now == IntPtr.Zero) continue;
+                title.Clear();
+                GetWindowText(now, title, 32);
+                if (now == jw || title.ToString() == "JW Library") BringToFront(front);
+            }
+        }
+        finally { LockSetForegroundWindow(2); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool LockSetForegroundWindow(uint code);
+
+    // A minimised JW Library is brought back to be driven (minimised, it shows Windows nothing) - but
+    // off the screens to the right, and not made active, so it isn't seen - then minimised again, its
+    // place on the screen as it was.
+    static WINDOWPLACEMENT JwOutOfSight(IntPtr h)
+    {
+        var was = new WINDOWPLACEMENT { length = Marshal.SizeOf(typeof(WINDOWPLACEMENT)) };
+        GetWindowPlacement(h, ref was);
+        WINDOWPLACEMENT away = was;
+        Rectangle all = SystemInformation.VirtualScreen;
+        int w = Math.Max(800, was.normal.Right - was.normal.Left), ht = Math.Max(600, was.normal.Bottom - was.normal.Top);
+        away.normal = new RECT { Left = all.Right + 100, Top = all.Top, Right = all.Right + 100 + w, Bottom = all.Top + ht };
+        away.flags = 0;
+        away.showCmd = 4;   // restored, not activated
+        SetWindowPlacement(h, ref away);
+        Thread.Sleep(800);
+        return was;
+    }
+
+    static void JwBackToMinimised(IntPtr h, WINDOWPLACEMENT was)
+    {
+        was.showCmd = 7;   // minimised, not activated
+        SetWindowPlacement(h, ref was);
+    }
+
+    struct WINDOWPLACEMENT { public int length, flags, showCmd; public Point minPosition, maxPosition; public RECT normal; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr h, ref WINDOWPLACEMENT wp);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPlacement(IntPtr h, ref WINDOWPLACEMENT wp);
+
+    // JW Library's page in its window (from the window's top left): under its title bar, right of its
+    // side menu. Empty if it can't be told.
+    static Rectangle JwPageArea(AutomationElement w, IntPtr h)
+    {
+        RECT r;
+        AutomationElement core = w.FindFirst(TreeScope.Children,
+            new PropertyCondition(AutomationElement.ClassNameProperty, "Windows.UI.Core.CoreWindow"));
+        if (core == null || !GetWindowRect(h, out r)) return Rectangle.Empty;
+        System.Windows.Rect c = core.Current.BoundingRectangle;
+        if (c.IsEmpty || c.Width < 100 || c.Height < 100) return Rectangle.Empty;
+        double left = c.Left;
+        AutomationElement menu = core.FindFirst(TreeScope.Children,
+            new PropertyCondition(AutomationElement.AutomationIdProperty, "PaneRoot"));
+        if (menu != null && !menu.Current.IsOffscreen)
+        {
+            System.Windows.Rect m = menu.Current.BoundingRectangle;
+            if (!m.IsEmpty && m.Width < c.Width / 3) left = m.Right;
+        }
+        return new Rectangle((int)left - r.Left, (int)c.Top - r.Top, (int)(c.Right - left), (int)c.Height);
+    }
+
+    // Shows one of the page's items on the TV: the one at that place in the list, if it still has that
+    // name. Something already open (over the list) is closed first.
+    static string JwShow(int index, string name)
+    {
+        IntPtr h = JwMainHandle;
+        if (h == IntPtr.Zero || !IsWindow(h)) return "JW Library isn't open";
+        lock (JwLock)
+        {
+            try
+            {
+                // Minimised, JW Library shows Windows nothing: brought back (not made active) for the
+                // moment, and minimised again after - what it shows stays on the TV.
+                bool minimised = IsIconic(h);
+                WINDOWPLACEMENT was = minimised ? JwOutOfSight(h) : default(WINDOWPLACEMENT);
+                try { return JwShowHere(h, index, name); }
+                finally { if (minimised) { Thread.Sleep(600); JwBackToMinimised(h, was); } }
+            }
+            catch (Exception e) { Log("JW Library show: " + e.Message); return "couldn't reach JW Library"; }
+        }
+    }
+
+    static string JwShowHere(IntPtr h, int index, string name)
+    {
+        AutomationElement w = AutomationElement.FromHandle(h);
+        Func<AutomationElement> find = () =>
+        {
+            List<KeyValuePair<JwItem, AutomationElement>> items = JwMediaItems(w);
+            if (index >= 0 && index < items.Count && items[index].Key.Name == name) return items[index].Value;
+            return items.Find(x => x.Key.Name == name).Value;
+        };
+        // Something open (a picture over a playlist hides the list, a meeting's leaves it
+        // behind) is closed first, so the click or press reaches the list.
+        string open = JwMediaOpen();
+        if (open == "image" || open == "video" || open == "unknown")
+            if (!JwClose(w)) return "couldn't close what JW Library has open";
+        AutomationElement item = WaitFor(find, 3000);
+        if (item == null) return "it isn't on JW Library's page any more";
+        if (!JwPress(item, h)) return "couldn't bring JW Library forward to open it";
+        JwShowing = name;
+        JwMain = null;   // its page changed
+        return "ok";
+    }
+
+    // Closes the picture or video JW Library has open, with its Back button, back to the page it was
+    // opened from. Only when something is open: Back on a page would leave it.
+    static string JwStop()
+    {
+        IntPtr h = JwMainHandle;
+        if (h == IntPtr.Zero || !IsWindow(h)) return "JW Library isn't open";
+        lock (JwLock)
+        {
+            bool minimised = IsIconic(h);   // brought back (out of sight) for its Back button, minimised again after
+            WINDOWPLACEMENT was = default(WINDOWPLACEMENT);
+            try
+            {
+                if (minimised) was = JwOutOfSight(h);
+                if (JwMediaOpen() == "none") { JwShowing = ""; return "ok"; }
+                if (!JwClose(AutomationElement.FromHandle(h))) return "couldn't find JW Library's Back button";
+                JwShowing = "";
+                return "ok";
+            }
+            catch (Exception e) { Log("JW Library stop: " + e.Message); return "couldn't reach JW Library"; }
+            finally { if (minimised) { Thread.Sleep(300); JwBackToMinimised(h, was); } }
+        }
+    }
+
+    static bool JwClose(AutomationElement w)
+    {
+        AutomationElement back = w.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "Back"));
+        if (back == null || back.Current.IsOffscreen || !back.Current.IsEnabled) return false;
+        IntPtr front = GetForegroundWindow();
+        HoldFront();
+        Press(back);
+        JwMain = null;
+        KeepInFront(front, new IntPtr(w.Current.NativeWindowHandle));   // closing, it makes itself active too
+        return true;
+    }
+
+    // Zoom's side panel (Participants, or Chat) in its window, from the window's top left; empty when
+    // none is open. Zoom's video sits in its "ContentLeftPanel", which narrows to make room for the
+    // panel; failing that, the Participants panel is found by its row of buttons (on the screen, so
+    // only when Zoom isn't covered there).
+    static Rectangle ZoomSidePanel(IntPtr zoom)
+    {
+        RECT r;
+        if (!GetWindowRect(zoom, out r)) return Rectangle.Empty;
+        int left = -1;
+        try
+        {
+            AutomationElement video = AutomationElement.FromHandle(zoom).FindFirst(TreeScope.Children,
+                new PropertyCondition(AutomationElement.NameProperty, "ContentLeftPanel"));
+            if (video != null)
+            {
+                System.Windows.Rect v = video.Current.BoundingRectangle;
+                if (!v.IsEmpty && r.Right - (int)v.Right >= 150) left = (int)v.Right;
+            }
+        }
+        catch (ElementNotAvailableException) { }
+        if (left < 0)
+        {
+            Point[] buttons = FindPanelButtons(zoom);
+            if (buttons != null) left = Math.Max(r.Left, buttons[0].X - (buttons[1].X - buttons[0].X) / 2 - 12);
+        }
+        if (left < 0) return Rectangle.Empty;
+        return new Rectangle(left - r.Left, 0, r.Right - left, r.Bottom - r.Top);
+    }
+
+    // Zoom's Participants panel opened or closed with Zoom's own key, Alt+U: Zoom is brought in front
+    // for it (the key is only sent if it is), and the window that was in front put back after. Zoom
+    // widens its window for the panel, so its size is put back too, the video making room.
+    static string ToggleZoomPanel() { return OneAtATime(ToggleZoomPanelHere); }
+
+    static string ToggleZoomPanelHere()
+    {
+        IntPtr zoom = ZoomMeetingHere();
+        if (zoom == IntPtr.Zero) return "no Zoom meeting open";
+        IntPtr popup = ZoomPopup();
+        if (popup != IntPtr.Zero)   // in a window of its own: closed as its ✕ would
+        {
+            PostMessage(popup, 0x0010, IntPtr.Zero, IntPtr.Zero);
+            Thread.Sleep(400);
+            ZoomPanelOpen = false;
+            OnUi(() => { ZoomView.Source = zoom; ZoomView.Crop = Rectangle.Empty; UpdateViews(); });
+            return "ok";
+        }
+        RECT r;
+        bool keepSize = GetWindowRect(zoom, out r) && !IsZoomed(zoom);
+        IntPtr was = GetForegroundWindow();
+        BringToFront(zoom);
+        for (int i = 0; i < 10 && GetForegroundWindow() != zoom; i++) Thread.Sleep(50);
+        if (GetForegroundWindow() != zoom) return "couldn't bring Zoom forward";
+        keybd_event(0x12, 0, 0, UIntPtr.Zero);     // Alt+U: Participants
+        keybd_event(0x55, 0, 0, UIntPtr.Zero);
+        keybd_event(0x55, 0, 2, UIntPtr.Zero);
+        keybd_event(0x12, 0, 2, UIntPtr.Zero);
+        Thread.Sleep(600);
+        if (keepSize) SetWindowPos(zoom, IntPtr.Zero, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top, 0x0004 | 0x0010);
+        IntPtr opened = ZoomPopup();
+        if (opened != IntPtr.Zero) Thread.Sleep(300);
+        if (was != IntPtr.Zero && was != zoom && was != opened) BringToFront(was);
+        Rectangle panel = opened != IntPtr.Zero ? Rectangle.Empty : ZoomSidePanel(zoom);
+        ZoomPanelOpen = opened != IntPtr.Zero || !panel.IsEmpty;
+        OnUi(() => { ZoomView.Source = opened != IntPtr.Zero ? opened : zoom; ZoomView.Crop = panel; UpdateViews(); });
+        return "ok";
+    }
+
+    // ---- OBS coming back by itself ------------------------------------------------
+    // Should OBS close or crash around a meeting (from 45 minutes before it starts until 2 hours
+    // after), it's started again with its virtual camera after 10 seconds, by the setup with just
+    // OBS. Not while the setup is running (it may be restarting a stuck OBS itself), and not more
+    // than once every 3 minutes, in case it can't start.
+
+    static void WatchObs()
+    {
+        DateTime goneSince = DateTime.MinValue, triedAt = DateTime.MinValue;
+        while (true)
+        {
+            Thread.Sleep(2000);
+            try
+            {
+                long now = NowMs();
+                bool nearMeeting = MeetingAt > 0 && now > MeetingAt - 45 * 60000 && now < MeetingAt + 2 * 3600000;
+                bool busy;
+                lock (SetupLock) busy = SetupRunning;
+                if (NoObs || !nearMeeting || busy || Process.GetProcessesByName("obs64").Length > 0) { goneSince = DateTime.MinValue; continue; }
+                if (goneSince == DateTime.MinValue) goneSince = DateTime.Now;
+                if (DateTime.Now - goneSince < TimeSpan.FromSeconds(10) || DateTime.Now - triedAt < TimeSpan.FromMinutes(3)) continue;
+                triedAt = DateTime.Now;
+                Log("OBS isn't running: starting it again");
+                RunSetup(null, true);
+            }
+            catch (Exception e) { Log("OBS: " + e.Message); }
         }
     }
 
@@ -2605,8 +4021,12 @@ static class MeetingAV
     {
         while (true)
         {
-            TcpClient client = listener.AcceptTcpClient();
-            ThreadPool.QueueUserWorkItem(_ => Handle(client));
+            try
+            {
+                TcpClient client = listener.AcceptTcpClient();
+                ThreadPool.QueueUserWorkItem(_ => Handle(client));
+            }
+            catch (Exception e) { Log("tablet server: " + e.Message); Thread.Sleep(1000); }
         }
     }
 
@@ -2673,10 +4093,17 @@ static class MeetingAV
                     (sc == null ? "null" : "{\"name\":" + Json(sc.DeviceName) + ",\"x\":" + sc.Bounds.X + ",\"y\":" + sc.Bounds.Y +
                                            ",\"w\":" + sc.Bounds.Width + ",\"h\":" + sc.Bounds.Height + "}") + "}");
             }
+            else if (path == "/setup/skip" && local)
+            {
+                // "Show the windows" on the start-up screen: the PC's screen back now, arranged when it's all open.
+                StartingUp = false;
+                Uncover();
+                SendJson(stream, SetupJson());
+            }
             else if (path == "/setup/run" && local)
             {
                 Match m = Regex.Match(query, "meeting=(Midweek|Weekend)");
-                RunSetup(m.Success ? m.Groups[1].Value : null);
+                RunSetup(m.Success ? m.Groups[1].Value : null, query.Contains("obs=1"));
                 SendJson(stream, SetupJson());
             }
             else if (path == "/app" && local)
@@ -2730,7 +4157,7 @@ static class MeetingAV
                 if (Interlocked.Exchange(ref JwNavigating, 1) == 1) { SendJson(stream, "{\"ok\":false,\"busy\":true}"); return; }
                 try
                 {
-                    bool ok = path == "/jw/meetings" ? JwOpenMeetings() : JwOpenPlaylists();
+                    bool ok = JwKeepingFront(path == "/jw/meetings" ? (Func<bool>)JwOpenMeetings : JwOpenPlaylists);
                     SendJson(stream, "{\"ok\":" + (ok ? "true" : "false") + "}");
                 }
                 finally { JwNavigating = 0; }
@@ -2756,6 +4183,39 @@ static class MeetingAV
                 ZoomMuteResult = MuteZoomEveryone(); ZoomMutedAt = NowMs();
                 SendJson(stream, "{\"result\":" + Json(ZoomMuteResult) + ",\"mics\":" + Json(ZoomMics) + "}");
             }
+            else if (path == "/jw/show" && local)   // i=<its place in the list>&n=<its name>
+            {
+                Match i = Regex.Match(query, "(?:^|&)i=(\\d+)"), n = Regex.Match(query, "(?:^|&)n=([^&]*)");
+                string result = JwShow(i.Success ? int.Parse(i.Groups[1].Value) : -1,
+                                       n.Success ? Uri.UnescapeDataString(n.Groups[1].Value.Replace('+', ' ')) : "");
+                SendJson(stream, "{\"result\":" + Json(result) + "}");
+            }
+            else if (path == "/jw/download" && local)   // the page's media (or this week's), best quality
+            {
+                if (Interlocked.Exchange(ref JwNavigating, 1) == 1) { SendJson(stream, "{\"started\":-2}"); return; }
+                try
+                {
+                    int started = -1;
+                    JwKeepingFront(() => (started = JwDownloadAll()) >= 0);
+                    SendJson(stream, "{\"started\":" + started + "}");
+                }
+                finally { JwNavigating = 0; }
+            }
+            else if (path == "/jw/stop" && local)
+                SendJson(stream, "{\"result\":" + Json(JwStop()) + "}");
+            else if (path == "/zoom/lower-hands" && local)
+                SendJson(stream, "{\"result\":" + Json(LowerZoomHands()) + "}");
+            else if (path == "/zoom/admit" && local)   // who=<their line's hash>, or the first waiting
+            {
+                Match who = Regex.Match(query, "(?:^|&)who=(-?\\d+)");
+                long hash = who.Success ? long.Parse(who.Groups[1].Value) : 0;
+                string result = AdmitZoom(hash);
+                ZoomWaiting = ReadZoomWaiting();
+                OnUi(UpdateViews);
+                SendJson(stream, "{\"result\":" + Json(result) + "}");
+            }
+            else if (path == "/zoom/panel" && local)   // Participants opened or closed
+                SendJson(stream, "{\"result\":" + Json(ToggleZoomPanel()) + ",\"open\":" + (ZoomPanelOpen ? "true" : "false") + "}");
             else if (path == "/windows/arrange" && local)
                 SendJson(stream, ArrangeWindows());
             else if (path == "/jw/second-display" && local)   // on=1 or on=0
@@ -2866,7 +4326,8 @@ static class MeetingAV
 // timer.html. It never takes the keyboard from the window being used.
 class TimerWindow : Form
 {
-    readonly WebView2 view = new WebView2 { Dock = DockStyle.Fill };
+    WebView2 view;
+    readonly string url, userData;
 
     public TimerWindow(string url, string userData, Screen screen, bool onTop = false)
     {
@@ -2891,21 +4352,20 @@ class TimerWindow : Form
             keepOnTop.Start();
             FormClosed += (s, e) => keepOnTop.Dispose();
         }
-        view.DefaultBackgroundColor = Color.Black;
-        Controls.Add(view);
-        Load += async (s, e) =>
+        this.url = url;
+        this.userData = userData;
+        Load += (s, e) => StartView();
+    }
+
+    async void StartView()
+    {
+        try
         {
-            try
-            {
-                CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, userData);
-                await view.EnsureCoreWebView2Async(env);
-                view.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                view.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                view.CoreWebView2.ProcessFailed += (o, a) => { try { view.CoreWebView2.Reload(); } catch { } };
-                view.Source = new Uri(url);
-            }
-            catch { Close(); }
-        };
+            view = await AppWindow.NewView(this, userData, () => BeginInvoke((Action)StartView));
+            view.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            view.Source = new Uri(url);
+        }
+        catch { Close(); }
     }
 
     Rectangle want;
@@ -2926,8 +4386,10 @@ class TimerWindow : Form
 // its own taskbar button and icon. Links that open a new window go to the normal browser.
 class AppWindow : Form
 {
-    readonly WebView2 view = new WebView2 { Dock = DockStyle.Fill };
+    WebView2 view;
+    readonly string url, userData;
     public event Action Failed;
+    public event Action<string> Message;   // from the page (chrome.webview.postMessage)
     public bool HasFailed;
 
     public AppWindow(string url, string userData, Icon icon)
@@ -2937,24 +4399,87 @@ class AppWindow : Form
         Rectangle area = Screen.PrimaryScreen.WorkingArea;
         StartPosition = FormStartPosition.Manual;
         Bounds = new Rectangle(area.X + area.Width / 10, area.Y + area.Height / 10, area.Width * 4 / 5, area.Height * 4 / 5);
-        Controls.Add(view);
-        Load += async (s, e) =>
+        this.url = url;
+        this.userData = userData;
+        Load += (s, e) => StartView();
+    }
+
+    async void StartView()
+    {
+        try
         {
-            try
+            view = await NewView(this, userData, () => BeginInvoke((Action)StartView));
+            view.CoreWebView2.NewWindowRequested += (o, a) => { a.Handled = true; try { Process.Start(a.Uri); } catch { } };
+            view.CoreWebView2.WebMessageReceived += (o, a) =>
             {
-                CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, userData);
-                await view.EnsureCoreWebView2Async(env);
-                view.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                view.CoreWebView2.NewWindowRequested += (o, a) => { a.Handled = true; try { Process.Start(a.Uri); } catch { } };
-                view.CoreWebView2.ProcessFailed += (o, a) => { try { view.CoreWebView2.Reload(); } catch { } };
-                view.Source = new Uri(url);
-            }
-            catch
+                string m = null;
+                try { m = a.TryGetWebMessageAsString(); } catch { }
+                if (m != null && Message != null) Message(m);
+            };
+            view.Source = new Uri(url);
+        }
+        catch
+        {
+            HasFailed = true;
+            if (Failed != null) Failed();
+        }
+    }
+
+    // A WebView2 filling the window, in place of the one before. Should the page stop (its process
+    // crashed or hung) it's reloaded; should Edge's engine itself stop, that WebView2 can't be used
+    // again, so after a second restart() makes a new one.
+    public static async System.Threading.Tasks.Task<WebView2> NewView(Form form, string userData, Action restart)
+    {
+        var old = new List<Control>();
+        foreach (Control c in form.Controls) if (c is WebView2) old.Add(c);
+        foreach (Control c in old) { form.Controls.Remove(c); c.Dispose(); }
+        var view = new WebView2 { Dock = DockStyle.Fill };
+        if (form is TimerWindow) view.DefaultBackgroundColor = Color.Black;
+        form.Controls.Add(view);
+        CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, userData);
+        await view.EnsureCoreWebView2Async(env);
+        view.CoreWebView2.Settings.IsStatusBarEnabled = false;
+        view.CoreWebView2.ProcessFailed += async (o, a) =>
+        {
+            if (a.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
             {
-                HasFailed = true;
-                if (Failed != null) Failed();
+                await System.Threading.Tasks.Task.Delay(1000);
+                if (!form.IsDisposed) restart();
             }
+            else if (a.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited ||
+                     a.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+                try { view.CoreWebView2.Reload(); } catch { }
         };
+        return view;
+    }
+
+    // While Meeting AV starts up, its window covers the whole of the PC's screen, on top, so the
+    // programs opening behind it (OBS, JW Library, Zoom) aren't seen jumping about; then back as it was.
+    Rectangle normal;
+    public bool Covering { get; private set; }
+    public void Cover(bool on)
+    {
+        if (on == Covering) return;
+        Covering = on;
+        if (on)
+        {
+            normal = Bounds;
+            FormBorderStyle = FormBorderStyle.None;
+            Bounds = Screen.PrimaryScreen.Bounds;
+            TopMost = true;
+        }
+        else
+        {
+            TopMost = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            Bounds = normal;
+        }
+    }
+
+    // To the page, as a message event.
+    public void Post(string json)
+    {
+        try { if (view != null && view.CoreWebView2 != null) view.CoreWebView2.PostWebMessageAsJson(json); } catch { }
     }
 
     public void Bring()
@@ -2962,6 +4487,78 @@ class AppWindow : Form
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
     }
+}
+
+// One program's window shown live in Meeting AV's window, by Windows' thumbnails. Its source is
+// set from the background, its box by the page; Update (on the window's thread) puts it right.
+class LiveView
+{
+    public volatile IntPtr Source;    // the window shown, or none
+    public Rectangle Box;             // where, in Meeting AV's window (its pixels); empty: not shown
+    public Rectangle Crop;            // the part of the window shown (its pixels, from its top left); empty: all of it
+    IntPtr thumb, of;                 // the thumbnail, and the window it's of
+
+    // "shown", "minimised", or what to say when there's no window to show.
+    public string State(string none)
+    {
+        IntPtr h = Source;
+        return h == IntPtr.Zero || !IsWindow(h) ? none : IsIconic(h) ? "minimised" : "shown";
+    }
+
+    public void Update(Form into)
+    {
+        IntPtr h = Source;
+        if (Box.IsEmpty || h == IntPtr.Zero || !IsWindow(h) || IsIconic(h)) { Clear(); return; }
+        if (of != h)
+        {
+            Clear();
+            if (DwmRegisterThumbnail(into.Handle, h, out thumb) != 0) { thumb = IntPtr.Zero; return; }
+            of = h;
+        }
+        Size size;
+        if (DwmQueryThumbnailSourceSize(thumb, out size) != 0 || size.Width <= 0 || size.Height <= 0) return;
+        // The window (or the part of it cropped to), as big as fits in the box, in its middle...
+        Rectangle src = Rectangle.Intersect(Crop.IsEmpty ? new Rectangle(Point.Empty, size) : Crop, new Rectangle(Point.Empty, size));
+        if (src.Width < 20 || src.Height < 20) src = new Rectangle(Point.Empty, size);
+        double scale = Math.Min((double)Box.Width / src.Width, (double)Box.Height / src.Height);
+        int w = (int)(src.Width * scale), ht = (int)(src.Height * scale);
+        var fit = new Rectangle(Box.X + (Box.Width - w) / 2, Box.Y + (Box.Height - ht) / 2, w, ht);
+        // ...but only the part inside Meeting AV's window, with the page scrolled.
+        Rectangle part = Rectangle.Intersect(fit, into.ClientRectangle);
+        var props = new ThumbnailProperties { flags = 1 | 2 | 8, visible = part.Width > 0 && part.Height > 0 };
+        if (props.visible)
+        {
+            props.destination = new RECT { Left = part.Left, Top = part.Top, Right = part.Right, Bottom = part.Bottom };
+            props.source = new RECT
+            {
+                Left = src.X + (int)((part.Left - fit.Left) / scale), Top = src.Y + (int)((part.Top - fit.Top) / scale),
+                Right = src.X + (int)((part.Right - fit.Left) / scale), Bottom = src.Y + (int)((part.Bottom - fit.Top) / scale),
+            };
+        }
+        DwmUpdateThumbnailProperties(thumb, ref props);
+    }
+
+    void Clear()
+    {
+        if (thumb != IntPtr.Zero) DwmUnregisterThumbnail(thumb);
+        thumb = of = IntPtr.Zero;
+    }
+
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct ThumbnailProperties
+    {
+        public int flags;   // 1 destination, 2 source, 4 opacity, 8 visible, 16 client area only
+        public RECT destination, source;
+        public byte opacity;
+        public bool visible, clientAreaOnly;
+    }
+    [DllImport("dwmapi.dll")] static extern int DwmRegisterThumbnail(IntPtr destination, IntPtr source, out IntPtr thumb);
+    [DllImport("dwmapi.dll")] static extern int DwmUnregisterThumbnail(IntPtr thumb);
+    [DllImport("dwmapi.dll")] static extern int DwmUpdateThumbnailProperties(IntPtr thumb, ref ThumbnailProperties props);
+    [DllImport("dwmapi.dll")] static extern int DwmQueryThumbnailSourceSize(IntPtr thumb, out Size size);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
 }
 
 // ---- Windows Core Audio (the parts the sound mixer uses) ---------------------------

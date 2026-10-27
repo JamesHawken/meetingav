@@ -22,8 +22,11 @@ video, and run it all from a tablet.
    one that's stuck or not answering is closed and started again.
 3. It opens JW Library too. Put the congregation's Zoom invite link in
    Settings → This PC → **Zoom meeting link** and it joins that meeting as well,
-   each time it starts (or on **Get ready again** in the tray menu), then
-   arranges the windows as **Arrange** does.
+   each time it starts (or on **Get ready again** in the tray menu), with
+   Zoom's camera switched on (Zoom in English or French), then arranges the windows as **Arrange** does.
+   While it starts, Meeting AV covers the PC's screen with a **Getting ready**
+   screen so the programs open out of sight (**Show the windows** on it, or
+   Zoom still waiting after 30 seconds, brings the screen back sooner).
 4. The first time, a **setup guide** walks through the rest: OBS, the camera
    shots, meeting times, JW Library, the timer screen, following people and the
    tablet. Settings → This PC runs it again.
@@ -72,7 +75,8 @@ Monitor is the shot before the meeting.
 - **Auto camera** (a tick on the shots): looks twice a second and cuts once a
   new shot has held for about 1.5 seconds (at least 4 seconds on each). It follows people, switching between
   Demonstrations, Speaker, Table and Platform wide depending on where they stand
-  on the platform. Picking a shot yourself unticks it. With a Reader
+  on the platform. It's ticked each time Meeting AV opens on the PC; picking a
+  shot yourself unticks it (tick it again to let it take over). With a Reader
   scene, someone standing at the table cuts to Reader and someone sitting to
   Table: under Settings → Shots → *Follow people* (drag the lines on the picture), set the reader line between a seated
   head and a standing one.
@@ -80,8 +84,35 @@ Monitor is the shot before the meeting.
   parts, its countdown, its media in JW Library), Monday to Friday the midweek one.
 - **Hall TV: JW Library | Zoom** (by the shots): picks what the hall TV shows, JW
   Library's screen or Zoom's second window (Zoom's "dual monitors" mode keeps it
-  on that screen). It takes a few seconds, and leaves JW Library on the meeting's
+  on that screen), which is made full screen. It takes a few seconds, and leaves JW Library on the meeting's
   media.
+- **On this PC** (under the shots, in the app on the PC): JW Library's page and
+  Zoom's meeting, live, even when they're behind Meeting AV. Click a picture to
+  switch to that program (a minimised one is brought back); the pictures themselves
+  can only be watched.
+  - Under JW Library: a button for each picture, video and song on the page it's
+    on: this week's meeting media (Meeting media opens it) or a playlist
+    (Playlists). Click one to show it on the TV; the one showing is filled in.
+    **Stop** closes it. Meeting media is driven without the mouse; a playlist's
+    items can only be clicked, so JW Library comes to the front for a moment.
+    A playlist shows each picture for a few seconds then moves on, unless the
+    item's Stop box is ticked in JW Library. With JW Library minimised, the
+    picture shows what's on the TV instead, and the buttons still work: JW
+    Library comes back for a moment and is minimised again.
+  - Under Zoom: **Participants** opens or closes Zoom's Participants panel (the
+    picture then shows just the panel: who's unmuted, hands, the waiting room),
+    the waiting room - each person as Zoom shows them, with their own **Admit**
+    (only while the Participants panel is open: Zoom gives out no names, so
+    Meeting AV shows a picture of each line) - **Lower hands** (Zoom's "Clear
+    all feedback"), and the **Muted | Can unmute** switch. Admit and Lower
+    hands move the mouse in Zoom for a moment,
+    like the mute, and need you to be host or co-host. They work with the
+    Participants panel in Zoom's window or popped out into its own.
+- **Meeting AV's window** fills the screen when it opens (still a window: its
+  restore button gives a smaller one). JW Library and Zoom are arranged behind it,
+  and shown live in it. The page fits the window without scrolling: on a wide
+  screen in three columns (the picture, the shots, then JW Library and Zoom), on a
+  taller or smaller one in two (JW Library and Zoom under the picture).
 - **Arrange** (top): Meeting AV on the left half of the PC's screen, JW Library
   top right, Zoom's meeting bottom right (Zoom's home window is minimised). JW Library's TV and Zoom's window on
   it are left alone.
@@ -94,8 +125,11 @@ Monitor is the shot before the meeting.
   fade off.
 - **Notes:** a short note at the bottom says what just happened ("Table on air",
   "Auto camera off").
-- **Grid:** just the shots, big. Swipe right (or tap the left dot) for the shot
-  on air, full screen.
+- **Grid** (a tablet opens on it): one page with what's on air, the timer (time,
+  part, Start/Stop, a minute either way) and the shots, big enough for fingers -
+  side by side on a landscape screen, the shots underneath on an upright one,
+  with nothing to scroll. Swipe right (or tap the left dot) for the shot on air,
+  full screen; left for the sound, then the timer with all the parts.
 - **Studies:** starting the Watchtower Study or the Congregation Bible Study on
   the timer puts the *Speaker + Reader* scene on air, and Auto camera keeps to
   it while that part runs.
@@ -125,7 +159,7 @@ Monitor is the shot before the meeting.
   Zoom's Participants panel, unticks "Allow participants to unmute themselves" and
   confirms: everyone but you is muted and can't unmute themselves. It moves the
   mouse for a moment, then puts it back. You need to be host or co-host.
-  **Zoom mics: Muted | Can unmute** (by the shots) does the same at any time, or
+  **Muted | Can unmute** (under Zoom in On this PC) does the same at any time, or
   lets everyone unmute themselves again (nobody is unmuted for them).
   Settings → Meeting switches it off.
 - **Countdown:** in the last 5 minutes before the meeting, the speakers' screen
@@ -149,6 +183,17 @@ Monitor is the shot before the meeting.
 
 If the home-screen app says OBS didn't accept the password, delete it and do
 steps 2–3 again.
+
+## If something goes wrong
+
+- **OBS closes or crashes** around a meeting (from 45 minutes before it starts until 2
+  hours after): Meeting AV starts it again, with the virtual camera, after about 10
+  seconds. **Start OBS** (on the Ready bar and in Check) does the same at any time.
+- **OBS stops answering** but stays open: Meeting AV drops the connection and connects
+  again.
+- **Meeting AV itself** runs into something it can't carry on from: it starts again by
+  itself, leaving OBS, JW Library and Zoom as they are. If its page stops, it reloads.
+- What went wrong is noted in `log.txt` in `%LOCALAPPDATA%\MeetingAV`.
 
 ## Look
 
