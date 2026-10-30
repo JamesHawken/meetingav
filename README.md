@@ -1,6 +1,6 @@
 # Meeting AV
 
-Controls the OBS camera for a congregation meeting on Zoom: pick shots, follow
+Controls the OBS camera for a congregation meeting on Zoom: pick presets, follow
 whoever is on the platform, cut to the screen when JW Library shows a picture or
 video, and run it all from a tablet.
 
@@ -28,7 +28,7 @@ video, and run it all from a tablet.
    screen so the programs open out of sight (**Show the windows** on it, or
    Zoom still waiting after 30 seconds, brings the screen back sooner).
 4. The first time, a **setup guide** walks through the rest: OBS, the camera
-   shots, meeting times, JW Library, the timer screen, following people and the
+   presets, meeting times, JW Library, the timer screen, following people and the
    tablet. Settings → This PC runs it again.
 
 From half an hour before each meeting, a bar at the top says **Ready** - or
@@ -41,14 +41,13 @@ starts with Windows and keeps itself up to date from this repository: when a
 newer `MeetingAV.exe` is committed, it downloads it and a **Restart to update**
 button appears (both can be switched off under Settings → This PC).
 
-It opens in **Simple** mode: the timer, the picture and the shots. Everything
-automatic keeps running; **Simple** switches to the full view (sound, settings); **Menu** has the grid view, tablet, checks and settings.
+**Settings** at the top opens the settings, with **Check everything** and **Grid view** at its top.
 
 ## OBS scenes
 
-Shots are found by their scene names in OBS (not case-sensitive):
+Presets are found by their scene names in OBS (not case-sensitive):
 
-| Shot              | Scene name contains          |
+| Preset              | Scene name contains          |
 |-------------------|------------------------------|
 | Demonstrations    | `demo`                       |
 | Platform wide     | `wide` or `platform`         |
@@ -61,57 +60,63 @@ Shots are found by their scene names in OBS (not case-sensitive):
 | Holding screen (optional) | `holding`, `countdown`, `waiting` or `welcome` |
 
 Any other scenes appear under **Other scenes**. A holding screen isn't needed:
-Monitor is the shot before the meeting.
+Monitor is the preset before the meeting.
 
 ## During the meeting
 
-- **Shots:** click one, or press `1`–`9`. Picking a shot yourself turns
+- **Presets:** click one, or press `1`–`9`. Picking a preset yourself turns
   *Follow people* off until you switch it back on.
 - **Start camera:** turns on the OBS virtual camera (what Zoom sees); the button
   only shows while it's off. `V` turns it on or off.
-- **Auto media** (a tick on the shots): a JW Library picture cuts to
+- **Auto media** (a tick on the presets): a JW Library picture cuts to
   *Speaker + Monitor*, a video or song to *Monitor*, and closing it goes back to
-  the previous shot. `A` ticks or unticks it.
-- **Auto camera** (a tick on the shots): looks twice a second and cuts once a
-  new shot has held for about 1.5 seconds (at least 4 seconds on each). It follows people, switching between
+  the previous preset. `A` ticks or unticks it.
+- **Auto camera** (a tick on the presets): looks twice a second and cuts once a
+  new preset has held for about 1.5 seconds (at least 4 seconds on each). It follows people, switching between
   Demonstrations, Speaker, Table and Platform wide depending on where they stand
   on the platform. It's ticked each time Meeting AV opens on the PC; picking a
-  shot yourself unticks it (tick it again to let it take over). With a Reader
+  preset yourself unticks it (tick it again to let it take over). With a Reader
   scene, someone standing at the table cuts to Reader and someone sitting to
-  Table: under Settings → Shots → *Follow people* (drag the lines on the picture), set the reader line between a seated
+  Table: under Settings → Presets → *Follow people* (drag the lines on the picture), set the reader line between a seated
   head and a standing one.
 - **Which meeting:** Saturday and Sunday it's the weekend meeting (its times, its
   parts, its countdown, its media in JW Library), Monday to Friday the midweek one.
-- **Hall TV: JW Library | Zoom** (by the shots): picks what the hall TV shows, JW
+- **Hall TV: JW Library | Zoom** (by the presets): picks what the hall TV shows, JW
   Library's screen or Zoom's second window (Zoom's "dual monitors" mode keeps it
   on that screen), which is made full screen. It takes a few seconds, and leaves JW Library on the meeting's
   media.
-- **On this PC** (under the shots, in the app on the PC): JW Library's page and
-  Zoom's meeting, live, even when they're behind Meeting AV. Click a picture to
-  switch to that program (a minimised one is brought back); the pictures themselves
-  can only be watched.
-  - Under JW Library: a button for each picture, video and song on the page it's
-    on: this week's meeting media (Meeting media opens it) or a playlist
-    (Playlists). Click one to show it on the TV; the one showing is filled in.
-    **Stop** closes it. Meeting media is driven without the mouse; a playlist's
-    items can only be clicked, so JW Library comes to the front for a moment.
-    A playlist shows each picture for a few seconds then moves on, unless the
-    item's Stop box is ticked in JW Library. With JW Library minimised, the
-    picture shows what's on the TV instead, and the buttons still work: JW
-    Library comes back for a moment and is minimised again.
-  - Under Zoom: **Participants** opens or closes Zoom's Participants panel (the
-    picture then shows just the panel: who's unmuted, hands, the waiting room),
-    the waiting room - each person as Zoom shows them, with their own **Admit**
-    (only while the Participants panel is open: Zoom gives out no names, so
-    Meeting AV shows a picture of each line) - **Lower hands** (Zoom's "Clear
-    all feedback"), and the **Muted | Can unmute** switch. Admit and Lower
-    hands move the mouse in Zoom for a moment,
-    like the mute, and need you to be host or co-host. They work with the
-    Participants panel in Zoom's window or popped out into its own.
+- **JW Library** and **Zoom** cards: each program live, even behind Meeting AV,
+  worked from Meeting AV without bringing it forward.
+  - **JW Library's picture:** click it to press what's there (a song, picture,
+    video, menu entry), scroll it to move through JW Library. Its buttons: the
+    arrows open JW Library **full screen** in Meeting AV - the real JW Library in
+    the box, every click as in JW Library (**Exit full screen** or Esc to leave;
+    it goes back where it was) - the corners make its picture **bigger**, the
+    screen switches to it. With JW Library minimised, the picture shows the TV.
+  - **Under it:** a button for each picture, video and song on JW Library's page
+    (this week's meeting media, or a playlist). Click one to show it on the TV -
+    the preset changes straight away; **Stop** closes it. **Download** gets the
+    page's media in the best quality (it says **Downloaded** when all is). A
+    playlist's items can only be clicked, so JW Library comes forward for an
+    instant; a playlist moves on after a few seconds unless the item's Stop box
+    is ticked in JW Library.
+  - **Zoom's picture** shows only its Participants panel. Click in it as you
+    would in Zoom (Plus, someone's menu...: the menu comes up over the picture);
+    click someone in the waiting room to let them in. The panel is always open
+    in a meeting: it opens by itself, and if it's closed it opens again. Not in a
+    meeting: **Join the meeting** (the link in Settings → This PC) - Zoom stays
+    behind Meeting AV while it joins.
+  - **Under it:** the waiting room
+    with an **Admit** for each person (a picture of their line: Zoom gives out
+    no names), **Lower hands**, and the **Mute everyone** switch. Admitting, lowering
+    hands and muting move the mouse in Zoom for a moment and need you to be host
+    or co-host.
+- **Sound** folds to one line (with what Zoom is getting) to leave the presets big;
+  its button opens it.
 - **Meeting AV's window** fills the screen when it opens (still a window: its
   restore button gives a smaller one). JW Library and Zoom are arranged behind it,
   and shown live in it. The page fits the window without scrolling: on a wide
-  screen in three columns (the picture, the shots, then JW Library and Zoom), on a
+  screen in three columns (the picture, the presets, then JW Library and Zoom), on a
   taller or smaller one in two (JW Library and Zoom under the picture).
 - **Arrange** (top): Meeting AV on the left half of the PC's screen, JW Library
   top right, Zoom's meeting bottom right (Zoom's home window is minimised). JW Library's TV and Zoom's window on
@@ -120,15 +125,15 @@ Monitor is the shot before the meeting.
   meeting in JW Library, on its pictures and videos, or JW Library's playlists.
 - **Auto-start:** at the meeting time, turns the camera on and cuts to
   Speaker. Set the times under *Change times*.
-- **Shot changes:** a shot you pick cuts straight away; when Meeting AV changes
-  the shot by itself it fades (a third of a second). Settings → Shots switches the
+- **Preset changes:** a preset you pick cuts straight away; when Meeting AV changes
+  the preset by itself it fades (a fifth of a second). Settings → Presets switches the
   fade off.
 - **Notes:** a short note at the bottom says what just happened ("Table on air",
   "Auto camera off").
 - **Grid** (a tablet opens on it): one page with what's on air, the timer (time,
-  part, Start/Stop, a minute either way) and the shots, big enough for fingers -
-  side by side on a landscape screen, the shots underneath on an upright one,
-  with nothing to scroll. Swipe right (or tap the left dot) for the shot on air,
+  part, Start/Stop, a minute either way) and the presets, big enough for fingers -
+  side by side on a landscape screen, the presets underneath on an upright one,
+  with nothing to scroll. Swipe right (or tap the left dot) for the preset on air,
   full screen; left for the sound, then the timer with all the parts.
 - **Studies:** starting the Watchtower Study or the Congregation Bible Study on
   the timer puts the *Speaker + Reader* scene on air, and Auto camera keeps to
@@ -159,7 +164,7 @@ Monitor is the shot before the meeting.
   Zoom's Participants panel, unticks "Allow participants to unmute themselves" and
   confirms: everyone but you is muted and can't unmute themselves. It moves the
   mouse for a moment, then puts it back. You need to be host or co-host.
-  **Muted | Can unmute** (under Zoom in On this PC) does the same at any time, or
+  The **Mute everyone** switch (under Zoom in On this PC) does the same at any time, or
   lets everyone unmute themselves again (nobody is unmuted for them).
   Settings → Meeting switches it off.
 - **Countdown:** in the last 5 minutes before the meeting, the speakers' screen
@@ -177,12 +182,20 @@ Monitor is the shot before the meeting.
 ## Tablet or phone
 
 1. Join the same Wi-Fi as the PC.
-2. On the PC, click **Menu** → **Connect a tablet** and scan the code with the tablet's camera.
-3. Once it shows the shots, add it to the home screen (on an iPad: Share →
+2. On the PC, click **Settings** → **Connections** → **Tablet or phone** and scan the code with the tablet's camera.
+3. Pick what it's for (the **Mode** button at the top changes it):
+   - **Timer**: the meeting's parts and the time left, big.
+   - **Video**: the picture on air, the presets, and JW Library's media - tap one
+     to show it on the TV (the preset changes with it), **Stop** to close it.
+   - **Audio**: Zoom - the waiting room with **Admit**, the **Mute everyone** switch,
+     **Lower hands** - and the sound levels.
+   Each tablet keeps its own; a link ending `&mode=timer`, `&mode=video` or
+   `&mode=audio` opens straight in one.
+4. Add it to the home screen (on an iPad: Share →
    **Add to Home Screen**). It then opens full screen, already connected.
 
 If the home-screen app says OBS didn't accept the password, delete it and do
-steps 2–3 again.
+steps 2–4 again.
 
 ## If something goes wrong
 
@@ -203,7 +216,7 @@ darkened hall. **Size** makes everything smaller to fit more on the screen
 
 ## Moving to another PC
 
-Settings → This PC → **Save settings to a file** puts the meeting times, shots, following people, sound and
+Settings → This PC → **Save settings to a file** puts the meeting times, presets, following people, sound and
 timer choices in `Meeting AV settings.json` (in Downloads). On the other PC, **Load settings from a file**.
 The OBS scenes move separately: in OBS, **Scene Collection → Export**, then **Import** on the other PC.
 

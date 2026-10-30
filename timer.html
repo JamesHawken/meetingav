@@ -9,22 +9,27 @@
      counting up once over time. With no part loaded it shows the time of day - and in the last
      5 minutes before the meeting, a countdown to it. -->
 <style>
+  @font-face { font-family: "Inter"; src: url("lib/InterVariable.woff2") format("woff2");
+               font-weight: 100 900; font-style: normal; font-display: swap; }
   html, body { margin: 0; height: 100%; background: #000; color: #e5e7eb; overflow: hidden; cursor: none;
-               font-family: "Segoe UI", system-ui, sans-serif; }
+               font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+               -webkit-font-smoothing: antialiased; }
   #wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  #label { font-size: 5vh; color: #9ca3af; min-height: 7vh; text-align: center; padding: 0 5vw;
+  #label { font-size: 8vh; font-weight: 600; color: #e5e7eb; min-height: 10vh; text-align: center; padding: 0 5vw;
            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90vw; }
   #time { font-size: min(40vw, 64vh); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums;
-          letter-spacing: -.02em; transition: color .3s; }
+          letter-spacing: -.03em; transition: color .3s ease, opacity .3s ease; }
   #time.clock { font-weight: 500; color: #d1d5db; font-size: min(26vw, 48vh); }
-  #time.soon { color: #f3f4f6; }
-  #time.ok { color: #22c55e; }
-  #time.warn { color: #f59e0b; }
-  #time.over { color: #ef4444; }
+  #time.soon { color: #f5f5f7; }
+  #time.ok { color: #30d158; }
+  #time.warn { color: #ff9f0a; }
+  #time.over { color: #ff453a; }
   #time.paused { opacity: .45; }
-  #bar { position: fixed; left: 0; bottom: 0; height: 1.4vh; width: 0; background: #22c55e; transition: width .2s linear; }
-  #bar.warn { background: #f59e0b; }
-  #bar.over { background: #ef4444; }
+  /* Grows by sliding (scaleX), not by changing its width: no relayout every tick. */
+  #bar { position: fixed; left: 0; bottom: 0; height: 1.4vh; width: 100%; background: #30d158;
+         transform: scaleX(0); transform-origin: left; transition: transform .2s linear, background-color .3s ease; }
+  #bar.warn { background: #ff9f0a; }
+  #bar.over { background: #ff453a; }
 </style>
 </head>
 <body>
@@ -52,12 +57,12 @@ function render() {
     time.style.fontSize = '';
     $('label').textContent = 'Meeting starts in';
     bar.className = '';
-    bar.style.width = (1 - toGo / (5 * 60000)) * 100 + '%';
+    bar.style.transform = `scaleX(${1 - toGo / (5 * 60000)})`;
     return;
   }
   if (countdownOnly) {   // before the countdown or once it's over (the window closes then anyway)
     time.textContent = $('label').textContent = '';
-    bar.style.width = '0';
+    bar.style.transform = 'scaleX(0)';
     return;
   }
   if (!timer || !timer.length) {
@@ -65,7 +70,7 @@ function render() {
     time.style.fontSize = '';
     time.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     $('label').textContent = '';
-    bar.style.width = '0';
+    bar.style.transform = 'scaleX(0)';
     return;
   }
   const left = timer.running ? timer.endsAt - (Date.now() + offset) : timer.left;
@@ -75,7 +80,7 @@ function render() {
   time.style.fontSize = `min(${Math.round(160 / time.textContent.length)}vw, 64vh)`;   // "+12:30" still fits
   $('label').textContent = timer.label || '';
   bar.className = state;
-  bar.style.width = Math.min(100, Math.max(0, (1 - left / timer.length) * 100)) + '%';
+  bar.style.transform = `scaleX(${Math.min(1, Math.max(0, 1 - left / timer.length))})`;
 }
 
 async function poll() {
